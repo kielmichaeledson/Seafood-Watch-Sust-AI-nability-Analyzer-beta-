@@ -1,0 +1,5 @@
+{
+  "name": "SeafoodSupplyAI",
+  "description": "An application for business partners to upload seafood sourcing spreadsheets and receive Seafood Watch environmental ratings, reliability scores, and data gap analyses using AI.",
+  "requestFramePermissions": []
+}
