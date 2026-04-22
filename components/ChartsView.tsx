@@ -26,6 +26,7 @@ const ratingLabels: { [key in Rating]: string } = {
   [Rating.Avoid]: 'Red',
   [Rating.Certified]: 'Certified',
   [Rating.NA]: 'N/A',
+  [Rating.Unknown]: 'Unknown',
 };
 
 const ChartsView: React.FC<ChartsViewProps> = ({ results, columnMapping, onSegmentClick }) => {

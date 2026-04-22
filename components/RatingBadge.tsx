@@ -12,6 +12,7 @@ const ratingStyles: { [key in Rating]: string } = {
   [Rating.Avoid]: 'text-[#AA323C]',
   [Rating.Certified]: 'text-[#00629B]',
   [Rating.NA]: 'text-gray-500',
+  [Rating.Unknown]: 'text-gray-400 italic',
 };
 
 const ratingLabels: { [key in Rating]: string } = {
@@ -20,6 +21,7 @@ const ratingLabels: { [key in Rating]: string } = {
   [Rating.Avoid]: 'Red',
   [Rating.Certified]: 'Certified',
   [Rating.NA]: 'N/A',
+  [Rating.Unknown]: 'Unknown',
 };
 
 const RatingBadge: React.FC<RatingBadgeProps> = ({ rating }) => {

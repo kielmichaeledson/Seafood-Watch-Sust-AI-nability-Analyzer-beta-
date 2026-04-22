@@ -655,8 +655,36 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
                                                     <div className="md:col-span-2 font-bold italic text-[#00629B] text-sm uppercase md:text-base md:normal-case mb-2 md:mb-0">Match Rationale</div>
                                                     <div className="md:col-span-10 md:border-l border-blue-200 md:pl-6 text-[#00629B] italic text-sm md:text-base font-medium leading-relaxed">
                                                         {item.notes || 'No match rationale available.'}
+                                                        {item.dataQualityWarnings && item.dataQualityWarnings.length > 0 && (
+                                                            <div className="mt-2 flex flex-wrap gap-1">
+                                                                {item.dataQualityWarnings.map((w: string, wi: number) => (
+                                                                    <span key={wi} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200">
+                                                                        <svg className="mr-1 h-2 w-2 text-amber-400" fill="currentColor" viewBox="0 0 8 8">
+                                                                            <circle cx="4" cy="4" r="3" />
+                                                                        </svg>
+                                                                        {w.replace(/_/g, ' ')}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
+
+                                                {item.evidence && (
+                                                    <div className="col-span-12 grid grid-cols-1 md:grid-cols-12 py-3 px-6 bg-slate-50 items-start border-t border-slate-200">
+                                                        <div className="md:col-span-2 font-bold text-slate-500 text-[10px] uppercase tracking-wider mb-1 md:mb-0">Evidence Snippet</div>
+                                                        <div className="md:col-span-10 md:border-l border-slate-200 md:pl-6">
+                                                            <div className="relative">
+                                                                <svg className="absolute -left-4 top-0 h-4 w-4 text-slate-300" fill="currentColor" viewBox="0 0 24 24">
+                                                                    <path d="M14.017 21L14.017 18C14.017 16.8954 14.9124 16 16.017 16H19.017C19.5693 16 20.017 15.5523 20.017 15V9C20.017 8.44772 19.5693 8 19.017 8H16.017C14.9124 8 14.017 7.10457 14.017 6V3L21.017 3V15C21.017 18.3137 18.3307 21 15.017 21H14.017ZM3.01705 21L3.01705 18C3.01705 16.8954 3.91248 16 5.01705 16H8.01705C8.56933 16 9.01705 15.5523 9.01705 15V9C9.01705 8.44772 8.56933 8 8.01705 8H5.01705C3.91248 8 3.01705 7.10457 3.01705 6V3L10.017 3V15C10.017 18.3137 7.33075 21 4.01705 21H3.01705Z" />
+                                                                </svg>
+                                                                <p className="text-slate-600 italic text-xs leading-relaxed pl-4">
+                                                                    {item.evidence}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
 
                                                 {item.candidates && item.candidates.length > 0 && (
                                                     <div className="col-span-12 border-t border-gray-100 bg-gray-50/20 py-4 px-6">

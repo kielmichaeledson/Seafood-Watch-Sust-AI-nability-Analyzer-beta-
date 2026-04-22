@@ -19,6 +19,7 @@ const ratingColors: { [key in Rating]: string } = {
   [Rating.Avoid]: '#AA323C',
   [Rating.Certified]: '#00629B',
   [Rating.NA]: '#9ca3af',
+  [Rating.Unknown]: '#d1d5db',
 };
 
 const ratingLabels: { [key in Rating]: string } = {
@@ -27,9 +28,10 @@ const ratingLabels: { [key in Rating]: string } = {
   [Rating.Avoid]: 'Red',
   [Rating.Certified]: 'Certified',
   [Rating.NA]: 'N/A',
+  [Rating.Unknown]: 'Unknown',
 };
 
-const ratingOrder: Rating[] = [Rating.BestChoice, Rating.GoodAlternative, Rating.Avoid, Rating.Certified, Rating.NA];
+const ratingOrder: Rating[] = [Rating.BestChoice, Rating.GoodAlternative, Rating.Avoid, Rating.Certified, Rating.NA, Rating.Unknown];
 
 const StatCard: React.FC<{ title: string; value: string; icon: React.ReactNode }> = ({ title, value, icon }) => (
   <div className="bg-white p-6 rounded-lg shadow border border-gray-200 flex items-start">
@@ -113,6 +115,7 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onAnalyzeNew, onViewResu
       [Rating.Avoid]: { count: 0, volume: 0, topSpecies: {}, topCountries: {}, topSuppliers: {} },
       [Rating.Certified]: { count: 0, volume: 0, topSpecies: {}, topCountries: {}, topSuppliers: {} },
       [Rating.NA]: { count: 0, volume: 0, topSpecies: {}, topCountries: {}, topSuppliers: {} },
+      [Rating.Unknown]: { count: 0, volume: 0, topSpecies: {}, topCountries: {}, topSuppliers: {} },
     };
 
     selectedHistory.forEach(summary => {
@@ -178,6 +181,7 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onAnalyzeNew, onViewResu
             [Rating.Avoid]: 0,
             [Rating.Certified]: 0,
             [Rating.NA]: 0,
+            [Rating.Unknown]: 0,
         };
 
         if (effectiveMetric === 'count') {

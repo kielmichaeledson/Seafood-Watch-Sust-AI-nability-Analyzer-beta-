@@ -10,6 +10,299 @@ declare var process: {
 
 export type MatchCategory = 'country' | 'method';
 
+export const SPECIES_SYNONYM_MAP: Record<string, string> = {
+    // European seabass (CA Fish Grill: 'BRANZINO 3-5oz')
+    'branzino': 'european seabass',
+    'bronzini': 'european seabass',
+    'branzini': 'european seabass',
+    'loup de mer': 'european seabass',
+    'european sea bass': 'european seabass',
+    
+    // Sablefish (PCC: 'black cod or sablefish')
+    'black cod': 'sablefish',
+    'butterfish': 'sablefish',
+    'alaska black cod': 'sablefish',
+    'black cod or sablefish': 'sablefish',
+    
+    // Mahi / Dolphinfish
+    'mahi': 'dolphinfish',
+    'mahi mahi': 'dolphinfish',
+    'mahi-mahi': 'dolphinfish',
+    'dorado': 'dolphinfish',
+    
+    // Wahoo (PCC: 'ono or wahoo')
+    'ono': 'wahoo',
+    'ono or wahoo': 'wahoo',
+    
+    // Lingcod / Rockfish
+    'ling cod': 'lingcod',
+    'rock fish': 'rockfish',
+    'rock cod': 'rockfish',
+    
+    // Pollock (MOMs: 'Alaskan Pollock')
+    'alaskan pollock': 'alaska pollock',
+    'walleye pollock': 'alaska pollock',
+    'pacific pollock': 'alaska pollock',
+    
+    // Cod (MOMs: 'Alaskan Cod', 'Icelandic Cod')
+    'alaskan cod': 'pacific cod',
+    'market cod': 'pacific cod',
+    'true cod': 'pacific cod',
+    'icelandic cod': 'atlantic cod',
+    
+    // Salmon shortforms (PCC: 'Coho', 'Sockeye', 'king or chinook salmon')
+    'coho': 'coho salmon',
+    'coho or silver salmon': 'coho salmon',
+    'silver salmon': 'coho salmon',
+    'sockeye': 'sockeye salmon',
+    'red salmon': 'sockeye salmon',
+    'chinook': 'chinook salmon',
+    'king salmon': 'chinook salmon',
+    'king or chinook salmon': 'chinook salmon',
+    'keta': 'chum salmon',
+    'chum': 'chum salmon',
+    'keta salmon': 'chum salmon',
+    'pink salmon': 'pink salmon',
+    'humpy': 'pink salmon',
+    'steelhead': 'rainbow trout',
+    'steelhead trout': 'rainbow trout',
+    'norweigan salmon': 'atlantic salmon',
+    'norwegian salmon': 'atlantic salmon',
+    'farmed salmon': 'atlantic salmon',
+    
+    // Char
+    'char': 'arctic char',
+    'charr': 'arctic char',
+    'arctic charr': 'arctic char',
+    
+    // Catfish (MOMs: 'Blue Catfish')
+    'blue catfish': 'blue catfish',
+    'catfish': 'channel catfish',
+    
+    // Shrimp (PCC: 'Blue Shrimp' = Litopenaeus stylirostris, distinct from whiteleg)
+    'blue shrimp': 'blue shrimp',
+    'white shrimp': 'whiteleg shrimp',
+    'vannamei': 'whiteleg shrimp',
+    'spot shrimp': 'sidestriped shrimp',
+    'spot prawns': 'sidestriped shrimp',
+    'prawns': 'whiteleg shrimp',
+    'pink shrimp': 'pink shrimp',
+    'shrimp meat': 'whiteleg shrimp',
+    
+    // Crab (PCC: 'dungeness crab meat')
+    'dungeness': 'dungeness crab',
+    'dungeness crab meat': 'dungeness crab',
+    'snow crab': 'snow/queen crab',
+    'opilio crab': 'snow/queen crab',
+    'golden king crab': 'golden king crab',
+    'red king crab': 'red king crab',
+    'soft shell crab': 'blue crab',
+    'soft shells': 'blue crab',
+    'jonah crab': 'jonah crab',
+    
+    // Lobster (PCC: 'lobster tails', 'Spiny Lobster (Caribbean)')
+    'lobster tails': 'american lobster',
+    'maine lobster': 'american lobster',
+    'spiny lobster': 'caribbean spiny lobster',
+    'spiny lobster (caribbean)': 'caribbean spiny lobster',
+    'rock lobster': 'caribbean spiny lobster',
+    'scampi': 'norway lobster',
+    'langoustine': 'norway lobster',
+    'langostino': 'squat lobster',
+    
+    // Squid (CA Fish Grill: 'CALAMARI STRIPS'; Pacific Catch: 'California Market Squid', 'Longfin Squid', 'Northern Shortfin Squid')
+    'calamari': 'longfin inshore squid',
+    'calamari strips': 'longfin inshore squid',
+    'market squid': 'opalescent inshore squid',
+    'california market squid': 'opalescent inshore squid',
+    'longfin squid': 'longfin inshore squid',
+    'northern shortfin squid': 'northern shortfin squid',
+    
+    // Clams (Pacific Catch: 'Pacific Littleneck Clams')
+    'pacific littleneck clams': 'manila clam',
+    'littleneck': 'northern quahog',
+    'countneck': 'northern quahog',
+    'quahog': 'northern quahog',
+    'cockle': 'common cockle',
+    'new zealand cockles': 'common cockle',
+    
+    // Scallops
+    'sea scallops': 'sea scallop',
+    'diver scallop': 'sea scallop',
+    'queen scallops': 'queen scallop',
+    
+    // Oysters / mussels (PCC: 'oysters', 'mussels' generic)
+    'pacific oysters': 'pacific oyster',
+    'east coast oyster': 'eastern oyster',
+    'oysters': 'eastern oyster',
+    'mussels': 'northern blue mussel',
+    
+    // Flatfish
+    'halibut': 'atlantic halibut',
+    'petrale sole': 'petrale sole',
+    'dover sole': 'dover sole',
+    'grey sole': 'witch flounder',
+    'lemon sole': 'winter flounder',
+    'fluke': 'summer flounder',
+    
+    // Tuna (CA Fish Grill: 'TUNA 7-9 OZ'; PCC: 'ahi tuna', 'albacore tuna')
+    'ahi': 'yellowfin tuna',
+    'ahi tuna': 'yellowfin tuna',
+    'albacore tuna': 'albacore',
+    'albacore': 'albacore',
+    
+    // Other
+    'swai': 'pangasius',
+    'basa': 'pangasius',
+    'tra': 'pangasius',
+    'tilapia': 'tilapia',
+    'nile tilapia': 'tilapia',
+    'barramundi': 'barramundi',
+    'almaco jack': 'almaco jack',
+    'cobia': 'cobia',
+    'striped bass': 'striped bass',
+    'surimi': 'alaska pollock',
+    'imitation crab': 'alaska pollock',
+    'chilean sea bass': 'patagonian toothfish',
+    'monkfish': 'goosefish',
+    'tilefish': 'golden tilefish',
+    'swordfish': 'swordfish',
+    'spiny dogfish': 'spiny dogfish',
+    'mako shark': 'shortfin mako shark',
+    'black sea bass': 'black sea bass',
+};
+
+export const SCIENTIFIC_TO_COMMON: Record<string, string> = {
+    'gadus morhua': 'atlantic cod',
+    'gadus macrocephalus': 'pacific cod',
+    'melanogrammus aeglefinus': 'haddock',
+    'pollachius virens': 'pollock',
+    'theragra chalcogramma': 'alaska pollock',
+    'gadus chalcogrammus': 'alaska pollock',
+    'hippoglossus hippoglossus': 'atlantic halibut',
+    'hippoglossus stenolepis': 'pacific halibut',
+    'solea solea': 'dover sole',
+    'microstomus pacificus': 'dover sole',
+    'eopsetta jordani': 'petrale sole',
+    'glyptocephalus zachirus': 'rex sole',
+    'salmo salar': 'atlantic salmon',
+    'oncorhynchus mykiss': 'rainbow trout',
+    'oncorhynchus tshawytscha': 'chinook salmon',
+    'oncorhynchus nerka': 'sockeye salmon',
+    'oncorhynchus kisutch': 'coho salmon',
+    'oncorhynchus keta': 'chum salmon',
+    'oncorhynchus gorbuscha': 'pink salmon',
+    'salvelinus alpinus': 'arctic char',
+    'morone saxatilis': 'striped bass',
+    'thunnus albacares': 'yellowfin tuna',
+    'thunnus thynnus': 'atlantic bluefin tuna',
+    'thunnus obesus': 'bigeye tuna',
+    'thunnus alalunga': 'albacore',
+    'katsuwonus pelamis': 'skipjack tuna',
+    'xiphias gladius': 'swordfish',
+    'isurus oxyrinchus': 'shortfin mako shark',
+    'squalus acanthias': 'spiny dogfish',
+    'litopenaeus setiferus': 'white shrimp',
+    'litopenaeus vannamei': 'whiteleg shrimp',
+    'litopenaeus stylirostris': 'blue shrimp',
+    'penaeus monodon': 'giant tiger prawn',
+    'penaeus aztecus': 'brown shrimp',
+    'farfantepenaeus duorarum': 'pink shrimp',
+    'pandalus jordani': 'pink shrimp',
+    'pandalus borealis': 'northern shrimp',
+    'homarus americanus': 'american lobster',
+    'homarus gammarus': 'european lobster',
+    'nephrops norvegicus': 'norway lobster',
+    'callinectes sapidus': 'blue crab',
+    'cancer magister': 'dungeness crab',
+    'metacarcinus magister': 'dungeness crab',
+    'paralithodes camtschaticus': 'red king crab',
+    'chionoecetes opilio': 'snow/queen crab',
+    'oreochromis niloticus': 'tilapia',
+    'pangasianodon hypophthalmus': 'pangasius',
+    'ictalurus punctatus': 'channel catfish',
+    'dicentrarchus labrax': 'european seabass',
+    'lates calcarifer': 'barramundi',
+    'dissostichus eleginoides': 'patagonian toothfish',
+    'anoplopoma fimbria': 'sablefish',
+    'opiodon elongatus': 'lingcod',
+    'sebastes': 'rockfish',
+    'sebastes spp': 'rockfish',
+    'pleuronectidae': 'flatfish',
+    'lutjanus spp': 'snapper',
+    'lutjanus campechanus': 'red snapper',
+    'mycteroperca microlepis': 'gag',
+    'coryphaena hippurus': 'dolphinfish',
+    'acanthocybium solandri': 'wahoo',
+    'rachycentron canadum': 'cobia',
+    'scomberomorus cavalla': 'king mackerel',
+    'pomatomus saltatrix': 'bluefish',
+    'centropristis striata': 'black sea bass',
+    'paralichthys dentatus': 'summer flounder',
+    'mercenaria mercenaria': 'northern quahog',
+    'venerupis philippinarum': 'manila clam',
+    'argopecten irradians': 'bay scallop',
+    'placopecten magellanicus': 'sea scallop',
+    'crassostrea virginica': 'eastern oyster',
+    'magallana gigas': 'pacific oyster',
+    'mytilus edulis': 'northern blue mussel',
+    'doryteuthis opalescens': 'opalescent inshore squid',
+    'loligo pealeii': 'longfin inshore squid',
+};
+
+export const COUNTRY_NORMALIZATION_MAP: Record<string, string> = {
+    'united states of america (the)': 'United States',
+    'united states of america': 'United States',
+    'u.s.': 'United States',
+    'u.s.a.': 'United States',
+    'usa': 'United States',
+    'philippines (the)': 'Philippines',
+    'korea, republic of': 'South Korea',
+    'viet nam': 'Vietnam',
+    'russian federation (the)': 'Russia',
+};
+
+export const GEAR_FAMILY_MEMBERS: Record<string, string[]> = {
+    'ponds': ['ponds','pond','semi-intensive ponds','intensive ponds','extensive ponds',
+              'pond, frequent exchange','fully extensive','earthen ponds','silvocuture','silviculture'],
+    'net pens': ['net pens','pens','marine net pens','ocean pen','cages net pens',
+                 'freshwater net pens','sea cages','offshore cages','submersible net pen','open net pen','cage - floating','cage - fixed'],
+    'tanks': ['tanks','recirculating tanks','indoor recirculating tanks',
+              'outdoor recirculating tanks','raceways','raceway','outdoor flowthrough raceways',
+              'indoor flowthrough raceway','flow-through tanks','contained'],
+    'bottom culture': ['bottom culture','on-bottom culture','off-bottom culture',
+                       'off-bottom cultured','raft culture','longline culture','bag culture','suspended culture','on bottom','rope grown'],
+    'dredges': ['dredges','towed dredges','mechanized dredges','hand dredges',
+                'hydraulic dredges','dredges (unspecified)'],
+    'traps': ['traps','pots','trap/pot','pot/trap','traps (unspecified)','fyke nets','pound nets',
+              'weirs','vertical lines'],
+    'hooks and lines': ['hooks and lines','hooks_and_lines','longlines','longline',
+                        'set longlines','drifting longlines','longline (deep-set)',
+                        'longlines (deep-set)','longlines (shallow-set)','longlines (unspecified)',
+                        'bottom longline','bottom longlines','handlines','handline',
+                        'hand-operated pole-and-lines','handlines and hand-operated pole and lines',
+                        'hook and line','hooks and lines, other',
+                        'mechanized lines and pole-and-lines','jigging','trolling lines',
+                        'trolling','pole and line', 'pole-and-line', 'jig','trotline','gill net & troll',
+                        'longlines & trawls (unspecified)','hooks and line','dsbg','deep-set buoy gear'],
+    'gillnets': ['gillnets','gillnet','gill net','gillnets and entangling nets',
+                 'gillnets_and_entangling_nets','set gillnets','drift gillnets',
+                 'drift gillnets (driftnets)','combined gillnets - trammel nets',
+                 'trammel nets','entangling nets','entangling nets: trammel nets',
+                 'gillnets (unspecified)','reefnets','reffnets','lift nets','life nets'],
+    'trawls': ['trawls','trawl','bottom trawls','bottom trawl','btm/midwater trawl',
+               'midwater trawls','pelagic trawls','otter trawl','beam trawls',
+               'skimmer trawls','small mesh bottom trawls','trawls (unspecified)','trawls, other',
+               'trawls and long line (unspecified)'],
+    'seines': ['seines','purse seines','purse seine','beach seines','lampara nets',
+               'unassociated purse seine (non-fad)','associated purse seine (fad)',
+               'purse seine, other','seine nets','suripera net','suripera','danish seines','surrounding nets'],
+    'diving': ['diving','hand implements','hand picking','rakes and forks','harvesting machines', 'hand'],
+    'cast nets': ['cast nets','falling gear','falling_gear'],
+    'wild-caught unspecified': ['wild-caught','wild caught','unassessed fishing methods',
+                                'miscellaneous gears','miscellaneous'],
+};
+
 export interface MatchResult {
     score: number;
     relationship: 'exact' | 'equivalent' | 'related' | 'distinct';
@@ -24,12 +317,25 @@ export async function evaluateSemanticMatch(
     database: string, 
     category: MatchCategory
 ): Promise<MatchResult> {
-    const i = input.toLowerCase().trim();
-    const d = database.toLowerCase().trim();
+    const i = input.toLowerCase().trim().replace(/_/g, ' ');
+    const d = database.toLowerCase().trim().replace(/_/g, ' ');
     
     // 1. Exact match (fast path)
     if (i === d) {
         return { score: 1.0, relationship: 'exact' };
+    }
+
+    // Check Synonym Map
+    if (category === 'method') {
+        const iFamily = Object.keys(GEAR_FAMILY_MEMBERS).find(fam => 
+            GEAR_FAMILY_MEMBERS[fam].includes(i)
+        );
+        const dFamily = Object.keys(GEAR_FAMILY_MEMBERS).find(fam => 
+            GEAR_FAMILY_MEMBERS[fam].includes(d)
+        );
+        if (iFamily && dFamily && iFamily === dFamily) {
+            return { score: 1.0, relationship: 'equivalent' };
+        }
     }
 
     // 2. Check cache

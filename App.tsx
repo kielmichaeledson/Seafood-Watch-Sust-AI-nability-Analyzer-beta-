@@ -7,6 +7,7 @@ import { getUploadHistory, saveUploadToHistory, updateHistoryItemResults } from 
 import { performDataAudit, AuditReport } from './services/dataAuditService';
 import { getCurrentUser, logout } from './services/authService';
 import { saveTrainingExample } from './services/trainingService';
+import { UserCorrectionService } from './services/userCorrectionService';
 import FileUpload from './components/FileUpload';
 import ResultsTable from './components/ResultsTable';
 import Loader from './components/Loader';
@@ -25,7 +26,7 @@ import UserManagement from './components/UserManagement';
 type View = 'dashboard' | 'analyzer' | 'users';
 type AnalyzerState = 'upload' | 'preview' | 'mapping' | 'audit' | 'loading' | 'results';
 type ResultsViewMode = 'table' | 'charts' | 'review';
-import ReviewQueue from './src/components/ReviewQueue';
+import ReviewQueue from './components/ReviewQueue';
 
 const MAPPABLE_FIELDS = [
   'Wild or Farmed',
@@ -396,6 +397,7 @@ const App: React.FC = () => {
                 rating: analysisPart.rating,
                 reliabilityScore: analysisPart.reliabilityScore,
                 notes: analysisPart.notes,
+                evidence: analysisPart.evidence,
                 needsReview,
                 candidates: analysisPart.candidates,
             };
@@ -501,15 +503,30 @@ const App: React.FC = () => {
 
      try {
          const originalItem = updatedResults[index];
+         const originalAIResult = {
+             uniqueId: results[index].uniqueId,
+             rating: results[index].rating,
+             reliabilityScore: results[index].reliabilityScore,
+             notes: results[index].notes,
+             evidence: results[index].evidence
+         };
+
          const updatedAnalysis = await updateAnalysisForId(originalItem, newUniqueId);
          
-         const updatedItem = { 
+         const updatedItem: SeafoodResultItem = { 
            ...originalItem, 
            ...updatedAnalysis, 
            isUpdating: false, 
            isManual: true,
            needsReview: false,
          };
+
+         // Log correction
+         UserCorrectionService.logCorrection(
+           originalItem,
+           originalAIResult,
+           { uniqueId: updatedItem.uniqueId, rating: updatedItem.rating, notes: updatedItem.notes }
+         );
 
          setResults(prevResults => {
            if (!prevResults) return null;
@@ -722,6 +739,7 @@ const App: React.FC = () => {
                   items={results.filter(r => r.needsReview)} 
                   onApprove={handleSaveAssignment}
                   onCorrect={handleUpdateResult}
+                  columnMapping={columnMapping}
                 />
               ) : (
                 <ChartsView results={results} columnMapping={columnMapping} onSegmentClick={(t, d) => { setModalFilterData({title: t, data: d}); setIsFilterModalOpen(true); }} />
@@ -757,6 +775,17 @@ const App: React.FC = () => {
                 <span className="text-sm font-medium">{currentUser.username}</span>
               </div>
               <div className="h-6 w-px bg-white/20 hidden sm:block"></div>
+              {currentUser.role === 'admin' && (
+                <button 
+                  onClick={() => UserCorrectionService.downloadCorrections()}
+                  className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white border border-white/20"
+                  title="Download User Corrections Catalog"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </button>
+              )}
               <button 
                 onClick={handleLogout} 
                 className="text-xs font-bold bg-white/10 hover:bg-white/20 px-3 py-1 rounded transition-all flex items-center gap-2 border border-white/20"

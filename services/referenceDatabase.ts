@@ -1,24 +1,30 @@
 
 import { Rating } from '../types';
-import { evaluateSemanticMatch } from './semanticMatcher';
+import fuzzysort from 'fuzzysort';
+import MiniSearch from 'minisearch';
 
 export interface SeafoodRecord {
   UniqueID: string;
+  RecType: string;
   CommonName: string;
   ScientificName: string;
   FAOCommonName: string;
   FDACommonName: string;
   SubnationalArea: string;
   EconomicZone: string;
+  BodyOfWater: string;
   Methods: string;
   RatingColor: string;
   ProductionMethod: string;
+  HarvestCertification: string;
+  HarvestCertificationStandard: string;
 }
 
 let parsedDatabase: Map<string, SeafoodRecord> | null = null;
 let databaseArray: SeafoodRecord[] = [];
-// Pre-calculated index for faster species lookups
+let certifiedArray: SeafoodRecord[] = []; // New separate array for cert matches
 let speciesIndex: Map<string, SeafoodRecord[]> = new Map();
+let miniSearch: MiniSearch<any> | null = null;
 
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];
@@ -48,6 +54,7 @@ function parseCSVLine(line: string): string[] {
 function parseAndPopulate(csvText: string) {
   const newMap = new Map<string, SeafoodRecord>();
   const newArray: SeafoodRecord[] = [];
+  const newCertArray: SeafoodRecord[] = [];
   const newIndex = new Map<string, SeafoodRecord[]>();
   
   const lines = csvText.split('\n');
@@ -55,72 +62,93 @@ function parseAndPopulate(csvText: string) {
   if (!headerLine) return;
   
   const headers = parseCSVLine(headerLine);
-  const idIndex = headers.indexOf('UniqueID');
-  const productionMethodIndex = headers.indexOf('ProductionMethod');
-  const commonNameIndex = headers.indexOf('CommonName');
-  const scientificNameIndex = headers.indexOf('ScientificName');
-  const faoNameIndex = headers.indexOf('FAOCommonName');
-  const fdaNameIndex = headers.indexOf('FDACommonName');
-  const subnationalIndex = headers.indexOf('SubnationalArea');
-  const economicZoneIndex = headers.indexOf('EconomicZone');
-  const methodsIndex = headers.indexOf('Methods');
-  const ratingColorIndex = headers.indexOf('RatingColor');
   
-  // Filtering headers
-  const reportStatusIndex = headers.indexOf('ReportStatus');
-  const ratedUnratedIndex = headers.indexOf('RatedUnrated');
+  const getIdx = (name: string) => headers.indexOf(name);
+  
+  const idIndex = getIdx('UniqueID');
+  const recTypeIndex = getIdx('RecType');
+  const productionMethodIndex = getIdx('ProductionMethod');
+  const commonNameIndex = getIdx('CommonName');
+  const scientificNameIndex = getIdx('ScientificName');
+  const faoNameIndex = getIdx('FAOCommonName');
+  const fdaNameIndex = getIdx('FDACommonName');
+  const subnationalIndex = getIdx('SubnationalArea');
+  const economicZoneIndex = getIdx('EconomicZone');
+  const bowsIndex = getIdx('BOWs');
+  const methodsIndex = getIdx('Methods');
+  const ratingColorIndex = getIdx('RatingColor');
+  const harvestCertIndex = getIdx('HarvestCertification');
+  const harvestCertStdIndex = getIdx('HarvestCertificationStandard');
+
+  const getCol = (cols: string[], idx: number) => (idx !== -1 ? (cols[idx] || '').trim() : '');
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     
     const cols = parseCSVLine(line);
-    const id = cols[idIndex];
+    const id = getCol(cols, idIndex);
     
-    // Check if the row meets the specific filtering criteria requested
-    // If the columns exist, we strictly check for 'Published' and 'Rated'
-    // If they don't exist (like in the fallback data), we assume they are valid
-    const status = reportStatusIndex !== -1 ? cols[reportStatusIndex] : 'Published';
-    const rated = ratedUnratedIndex !== -1 ? cols[ratedUnratedIndex] : 'Rated';
-    const ratingColor = ratingColorIndex !== -1 ? cols[ratingColorIndex] : '';
+    if (!id) continue;
 
-    if (status !== 'Published' || rated !== 'Rated' || !ratingColor || ratingColor.toLowerCase() === 'n/a' || ratingColor.toLowerCase() === 'unrated') {
-      continue;
-    }
+    const ratingColor = getCol(cols, ratingColorIndex);
+    const recType = getCol(cols, recTypeIndex) || 'SFW';
 
-    if (id) {
-      const record: SeafoodRecord = {
-        UniqueID: id,
-        ProductionMethod: cols[productionMethodIndex] || 'F',
-        CommonName: cols[commonNameIndex] || '',
-        ScientificName: cols[scientificNameIndex] || '',
-        FAOCommonName: cols[faoNameIndex] || '',
-        FDACommonName: cols[fdaNameIndex] || '',
-        SubnationalArea: cols[subnationalIndex] || '',
-        EconomicZone: cols[economicZoneIndex] || '',
-        Methods: cols[methodsIndex] || '',
-        RatingColor: cols[ratingColorIndex] || ''
-      };
-      newMap.set(id, record);
+    const record: SeafoodRecord = {
+      UniqueID: id,
+      RecType: recType,
+      ProductionMethod: getCol(cols, productionMethodIndex) || 'F',
+      CommonName: getCol(cols, commonNameIndex),
+      ScientificName: getCol(cols, scientificNameIndex),
+      FAOCommonName: getCol(cols, faoNameIndex),
+      FDACommonName: getCol(cols, fdaNameIndex),
+      SubnationalArea: getCol(cols, subnationalIndex),
+      EconomicZone: getCol(cols, economicZoneIndex),
+      BodyOfWater: getCol(cols, bowsIndex),
+      Methods: getCol(cols, methodsIndex),
+      RatingColor: ratingColor,
+      HarvestCertification: getCol(cols, harvestCertIndex),
+      HarvestCertificationStandard: getCol(cols, harvestCertStdIndex)
+    };
+    
+    newMap.set(id, record);
+    
+    if (recType === 'CERT') {
+      newCertArray.push(record);
+    } else {
       newArray.push(record);
-
-      // Index by all known names for faster lookup
-      const names = new Set([
-        record.CommonName.toLowerCase(),
-        record.ScientificName.toLowerCase(),
-        record.FAOCommonName.toLowerCase(),
-        record.FDACommonName.toLowerCase()
-      ].filter(n => n && n !== '""'));
-
-      names.forEach(name => {
-        if (!newIndex.has(name)) newIndex.set(name, []);
-        newIndex.get(name)!.push(record);
-      });
     }
+
+    // Index by all known names for faster lookup
+    const names = new Set([
+      record.CommonName.toLowerCase(),
+      record.ScientificName.toLowerCase(),
+      record.FAOCommonName.toLowerCase(),
+      record.FDACommonName.toLowerCase()
+    ].filter(n => n && n !== '""' && n.length > 2));
+
+    names.forEach(name => {
+      if (!newIndex.has(name)) newIndex.set(name, []);
+      newIndex.get(name)!.push(record);
+    });
   }
+
+  // Build MiniSearch Index
+  miniSearch = new MiniSearch({
+    fields: ['CommonName', 'ScientificName', 'FAOCommonName', 'FDACommonName', 'EconomicZone', 'SubnationalArea', 'BodyOfWater', 'Methods', 'HarvestCertification'],
+    storeFields: ['UniqueID', 'RecType'],
+    idField: 'UniqueID',
+    searchOptions: {
+      prefix: true,
+      fuzzy: 0.2
+    }
+  });
+  
+  miniSearch.addAll([...newArray, ...newCertArray]);
 
   parsedDatabase = newMap;
   databaseArray = newArray;
+  certifiedArray = newCertArray;
   speciesIndex = newIndex;
 }
 
@@ -141,14 +169,16 @@ function initializeDatabase() {
   parseAndPopulate(REFERENCE_CSV);
 }
 
-export function getSeafoodById(id: string): { matchedKDEs: string; rating: Rating; notes?: string } | null {
+export function getSeafoodById(id: string): { matchedKDEs: string; rating: Rating; notes?: string; rawRecord: SeafoodRecord } | null {
   initializeDatabase();
   const record = parsedDatabase?.get(id);
   if (!record) return null;
+  const raw = record;
 
   return {
     matchedKDEs: formatKDE(record),
-    rating: mapColorToRating(record.RatingColor)
+    rating: mapColorToRating(record.RatingColor),
+    rawRecord: raw
   };
 }
 
@@ -203,188 +233,137 @@ export function getCanonicalTerms(): { species: string[]; countries: string[]; m
 }
 
 export async function findCandidates(
-    criteria: { species?: string; country?: string; subnational?: string; method?: string; farmedWild?: string; bodyOfWater?: string }, 
-    limit: number = 5,
+    criteria: { species?: string; country?: string; subnational?: string; method?: string; farmedWild?: string; bodyOfWater?: string; certification?: string }, 
+    limit: number = 8,
     skipAI: boolean = false
 ): Promise<Candidate[]> {
     initializeDatabase();
 
-    const species = (criteria.species || '').toLowerCase().trim();
-    const country = (criteria.country || '').toLowerCase().trim();
-    const subnational = (criteria.subnational || '').toLowerCase().trim();
-    const method = (criteria.method || '').toLowerCase().trim();
-    const farmedWild = (criteria.farmedWild || '').toLowerCase().trim();
-    const bodyOfWater = (criteria.bodyOfWater || '').toLowerCase().trim();
+    const species = (criteria.species || '').trim();
+    const country = (criteria.country || '').trim();
+    const subnational = (criteria.subnational || '').trim();
+    const method = (criteria.method || '').trim();
+    const farmedWild = (criteria.farmedWild || '').trim();
+    const bodyOfWater = (criteria.bodyOfWater || '').trim();
+    const certOrg = (criteria.certification || '').trim();
 
-    // Market Name Synonyms (Internal mapping for common mismatches)
-    const synonymMap: Record<string, string[]> = {
-        'chilean seabass': ['patagonian toothfish', 'antarctic toothfish'],
-        'patagonian toothfish': ['chilean seabass'],
-        'white tuna': ['albacore', 'escolar'],
-        'calamari': ['squid'],
-        'scampi': ['langoustine', 'norway lobster'],
-    };
+    if (!species) return [];
 
-    const speciesSearchTerms = new Set([species]);
-    if (synonymMap[species]) {
-        synonymMap[species].forEach(s => speciesSearchTerms.add(s));
-    }
-
-    // PERFORMANCE: Start with records that match species name exactly if possible
-    let recordsToSearch = databaseArray;
-    
-    // Check all search terms in the index
-    const indexedMatches: SeafoodRecord[] = [];
-    speciesSearchTerms.forEach(term => {
-        if (speciesIndex.has(term)) {
-            indexedMatches.push(...speciesIndex.get(term)!);
-        }
+    // Fast Pool Selection using MiniSearch
+    const query = [species, country, subnational, bodyOfWater, certOrg].filter(Boolean).join(' ');
+    const results = miniSearch?.search(query, {
+        boost: {
+            CommonName: 4,
+            ScientificName: 3,
+            FAOCommonName: 2,
+            FDACommonName: 2,
+            HarvestCertification: 3
+        },
+        prefix: true,
+        fuzzy: term => term.length > 3 ? 0.2 : 0
     });
 
-    if (indexedMatches.length > 0) {
-        recordsToSearch = indexedMatches;
-        // If we have very few matches, we might want to broaden back to full search, 
-        // but usually indexed matches are what we want.
-    }
+    if (!results || results.length === 0) return [];
 
-    // 1. Initial Species Filtering (Fast Heuristic)
-    const speciesCandidates = recordsToSearch.map(record => {
-        let score = 0;
-        const recNames = [
-            record.CommonName.toLowerCase(),
-            record.ScientificName.toLowerCase(),
-            record.FAOCommonName.toLowerCase(),
-            record.FDACommonName.toLowerCase()
-        ];
-
-        // SCORING LOGIC (Mapped to Seafood Watch Dataset Fields)
-        // 1. Species Match -> CommonName (Primary), ScientificName, FAOCommonName, FDACommonName
-        let speciesMatched = false;
-        speciesSearchTerms.forEach(term => {
-            if (recNames.some(rn => rn === term)) {
-                score += 100;
-                speciesMatched = true;
-            } else if (recNames.some(rn => rn.includes(term))) {
-                // Database record is more specific than the search term
-                score += 40;
-                speciesMatched = true;
-            } else if (recNames.some(rn => term.includes(rn) && rn.length > 3)) {
-                // Search term is more specific than the database record
-                score += 35;
-                speciesMatched = true;
-            }
-        });
-
-        return { record, score, speciesMatched };
-    }).filter(c => c.speciesMatched || !species);
-
-    // 2. Semantic Evaluation for Country and Method (AI-Driven)
-    // To maintain performance, we only evaluate the top species matches (e.g., top 20)
-    const sortedSpeciesCandidates = speciesCandidates
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 20);
-
-    const finalCandidates = await Promise.all(sortedSpeciesCandidates.map(async (c) => {
-        const record = c.record;
-        let score = c.score;
-        let isPerfect = c.score === 100; // Species must be perfect to start
+    // Second track: Score and refine candidates in the pool
+    const candidates = results.map(res => {
+        const record = parsedDatabase!.get(res.id)!;
         
-        const recZone = record.EconomicZone.toLowerCase();
-        const recSub = record.SubnationalArea.toLowerCase();
-        const recMethod = record.Methods.toLowerCase();
+        // Start with MiniSearch score (boosted)
+        let score = res.score * 10;
 
-        // 2. Country/Location Match -> EconomicZone (Semantic/AI-Driven)
-        // We combine country and body of water (including FAO areas) for a better location match
-        const locationInput = [country, bodyOfWater].filter(Boolean).join(' ');
-        if (locationInput) {
-            const match = skipAI 
-                ? (locationInput === recZone || recZone.includes(locationInput) || locationInput.includes(recZone) ? { relationship: 'related' as const } : { relationship: 'distinct' as const })
-                : await evaluateSemanticMatch(locationInput, recZone, 'country');
-            
-            if (match.relationship === 'exact' || match.relationship === 'equivalent') {
-                score += 60;
-            } else if (match.relationship === 'related') {
-                score += 30;
-                isPerfect = false;
-            } else if (recZone === 'worldwide' || recZone === 'global') {
-                score += 30;
-                isPerfect = false;
-            } else {
-                // Strict mismatch: if location is provided and doesn't match EconomicZone
-                return { record, score: 0, description: formatKDE(record), isPerfect: false };
-            }
-        } else if (recZone && recZone !== 'worldwide' && recZone !== 'global') {
-            // Database has a specific country but input doesn't
-            isPerfect = false;
-        }
+        const recZone = (record.EconomicZone || '').toLowerCase();
+        const recSub = (record.SubnationalArea || '').toLowerCase();
+        const recMethod = (record.Methods || '').toLowerCase();
+        const lCountry = country.toLowerCase();
+        const lMethod = method.toLowerCase();
+        const lFarmedWild = farmedWild.toLowerCase();
+        const lBodyOfWater = bodyOfWater.toLowerCase();
+        const lCertOrg = certOrg.toLowerCase();
 
-        // 3. Subnational Match -> SubnationalArea
-        if (subnational && recSub && recSub !== 'n/a' && recSub !== 'global' && recSub !== 'worldwide') {
-            if (recSub === subnational) {
-                score += 60;
-            } else if (recSub.includes(subnational) || subnational.includes(recSub)) {
-                score += 30;
-                isPerfect = false;
-            } else {
-                // Both have specific subnational areas and they don't match
-                return { record, score: 0, description: formatKDE(record), isPerfect: false };
-            }
-        } else if (subnational) {
-            // Input has subnational but DB is broad (empty/global)
-            score += 30;
-            isPerfect = false;
-        } else if (recSub && recSub !== 'n/a' && recSub !== 'global' && recSub !== 'worldwide') {
-            // DB has subnational but input doesn't
-            isPerfect = false;
-        }
-
-        // 4. Method Match -> Methods (Semantic/AI-Driven)
-        if (method) {
-            const match = skipAI
-                ? (method === recMethod || recMethod.includes(method) || method.includes(recMethod) ? { relationship: 'related' as const } : { relationship: 'distinct' as const })
-                : await evaluateSemanticMatch(method, recMethod, 'method');
-            
-            if (match.relationship === 'exact' || match.relationship === 'equivalent') {
-                score += 50;
-            } else if (match.relationship === 'related') {
-                score += 25;
-                isPerfect = false;
-            } else {
-                // Method mismatch (different families)
-                return { record, score: 0, description: formatKDE(record), isPerfect: false };
-            }
-        } else if (recMethod && recMethod !== 'n/a' && recMethod !== 'unknown') {
-            // DB has method but input doesn't
-            isPerfect = false;
-        }
-
-        // 5. Production Type Match -> ProductionMethod ('A' for Farmed, 'F' for Wild)
-        if (farmedWild) {
-          const isFarmedInput = farmedWild.includes('farm') || farmedWild.includes('aqua');
-          const isWildInput = farmedWild.includes('wild') || farmedWild.includes('fish');
-          const isFarmedDB = record.ProductionMethod === 'A';
-          const isWildDB = record.ProductionMethod === 'F';
-
-          if (isFarmedInput && isFarmedDB) {
-              score += 40;
-          } else if (isWildInput && isWildDB) {
-              score += 40;
-          } else {
-              // Strict mismatch on production type
-              return { record, score: 0, description: formatKDE(record), isPerfect: false };
-          }
-        }
-
-        return {
-            record,
-            score,
-            description: formatKDE(record),
-            isPerfect
+        // 1. Geographic Scoring
+        const geoScore = (term: string) => {
+            if (!term) return 0;
+            if (term === 'worldwide') return 15;
+            if (recZone === 'worldwide') return 40;
+            if (recZone.includes(term) || term.includes(recZone)) return 40;
+            if (recSub.includes(term) || term.includes(recSub)) return 30;
+            return 0;
         };
-    }));
+        const locationScore = Math.max(geoScore(lCountry), geoScore(lBodyOfWater));
+        score += locationScore;
 
-    return finalCandidates
-        .filter(c => c.score > 0)
+        // 1.5 Species-Method Probability Filtering
+        const getPlausibility = (s: string, m: string) => {
+            const ls = s.toLowerCase();
+            const lm = m.toLowerCase();
+            // Bivalves (Oysters, Mussels, Clams) vs Active Towed Gear (Trawl, Seine)
+            if (['oyster', 'mussel', 'clam', 'scallop'].some(b => ls.includes(b))) {
+                if (['trawl', 'seine', 'gillnet'].some(g => lm.includes(g))) return -50;
+            }
+            // Small pelagics vs Static Bottom Gear
+            if (['anchovy', 'sardine', 'herring'].some(p => ls.includes(p))) {
+                if (['bottom longline', 'pot', 'trap'].some(g => lm.includes(g))) return -30;
+            }
+            // Shrimp vs Handline/Harpoon
+            if (ls.includes('shrimp') && (lm.includes('handline') || lm.includes('harpoon'))) return -40;
+            return 0;
+        };
+        const plausibilityScore = getPlausibility(record.CommonName, lMethod);
+        score += plausibilityScore;
+
+        // 2. Method Scoring
+        if (lMethod) {
+            if (recMethod.includes(lMethod) || lMethod.includes(recMethod)) {
+                score += 50;
+            } else if (record.Methods === 'All production methods') {
+                score += 40;
+            }
+        }
+
+        // 3. Production Method (F/A)
+        if (lFarmedWild) {
+            const isFarmedInput = lFarmedWild.startsWith('f');
+            const isWildInput = lFarmedWild.startsWith('w');
+            const isFarmedDB = record.ProductionMethod === 'A';
+            const isWildDB = record.ProductionMethod === 'F';
+
+            if ((isFarmedInput && isFarmedDB) || (isWildInput && isWildDB)) {
+                score += 40;
+            } else if ((isFarmedInput && isWildDB) || (isWildInput && isFarmedDB)) {
+                score = 0; // Hard mismatch
+            }
+        }
+
+        // 4. CERT Org Match
+        if (record.RecType === 'CERT' && lCertOrg) {
+            const recCert = record.HarvestCertification.toLowerCase();
+            const certMap: Record<string, string> = {
+                'msc': 'marine stewardship council certified',
+                'asc': 'aquaculture stewardship council certified',
+                'bap': 'best aquaculture practices (bap) certified',
+                'naturland': 'naturland certified',
+                'fos': 'friend of the sea certified'
+            };
+            const normalizedInputCert = certMap[lCertOrg] || lCertOrg;
+            if (recCert.includes(normalizedInputCert) || normalizedInputCert.includes(recCert)) {
+                score += 50;
+            }
+        }
+
+        // High confidence direct match check
+        const hasExactCountry = country && (recZone === lCountry || recSub === lCountry);
+        const hasExactSub = !subnational || recSub === subnational.toLowerCase();
+        const hasExactBow = !bodyOfWater || (record.BodyOfWater || '').toLowerCase().includes(lBodyOfWater);
+        const hasExactMethod = !method || recMethod.includes(lMethod) || lMethod.includes(recMethod) || record.Methods === 'All production methods';
+        
+        const isPerfect = (res.score > 30 && hasExactCountry && hasExactSub && hasExactBow && hasExactMethod);
+
+        return { record, score, description: formatKDE(record), isPerfect };
+    });
+
+    return candidates
+        .filter(c => c.score > 15)
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
 }

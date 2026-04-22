@@ -9,6 +9,7 @@ const ratingColors: { [key in Rating]: string } = {
   [Rating.Avoid]: '#AA323C',
   [Rating.Certified]: '#00629B',
   [Rating.NA]: '#9ca3af',
+  [Rating.Unknown]: '#d1d5db',
 };
 
 const ratingLabels: { [key in Rating]: string } = {
@@ -17,9 +18,10 @@ const ratingLabels: { [key in Rating]: string } = {
   [Rating.Avoid]: 'Red',
   [Rating.Certified]: 'Certified',
   [Rating.NA]: 'N/A',
+  [Rating.Unknown]: 'Unknown',
 };
 
-const ratingOrder: Rating[] = [Rating.BestChoice, Rating.GoodAlternative, Rating.Avoid, Rating.Certified, Rating.NA];
+const ratingOrder: Rating[] = [Rating.BestChoice, Rating.GoodAlternative, Rating.Avoid, Rating.Certified, Rating.NA, Rating.Unknown];
 
 export interface BarChartDataItem {
   label: string;

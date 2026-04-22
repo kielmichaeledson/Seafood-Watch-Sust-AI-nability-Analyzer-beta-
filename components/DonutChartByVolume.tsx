@@ -9,7 +9,7 @@ interface DonutChartByVolumeProps {
   activeRating?: Rating | null;
 }
 
-const ratingOrder: Rating[] = [Rating.BestChoice, Rating.GoodAlternative, Rating.Avoid, Rating.Certified, Rating.NA];
+const ratingOrder: Rating[] = [Rating.BestChoice, Rating.GoodAlternative, Rating.Avoid, Rating.Certified, Rating.NA, Rating.Unknown];
 
 const ratingColors: { [key in Rating]: string } = {
   [Rating.BestChoice]: '#23872B',
@@ -17,6 +17,7 @@ const ratingColors: { [key in Rating]: string } = {
   [Rating.Avoid]: '#AA323C',
   [Rating.Certified]: '#00629B',
   [Rating.NA]: '#9ca3af',
+  [Rating.Unknown]: '#d1d5db',
 };
 
 const ratingLabels: { [key in Rating]: string } = {
@@ -25,6 +26,7 @@ const ratingLabels: { [key in Rating]: string } = {
   [Rating.Avoid]: 'Red',
   [Rating.Certified]: 'Certified',
   [Rating.NA]: 'N/A',
+  [Rating.Unknown]: 'Unknown',
 };
 
 const DonutChartByVolume: React.FC<DonutChartByVolumeProps> = ({ data, metric, onSegmentClick, activeRating }) => {
