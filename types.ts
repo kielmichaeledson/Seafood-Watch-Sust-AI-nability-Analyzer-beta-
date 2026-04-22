@@ -19,16 +19,15 @@ export interface User {
 }
 
 export interface SeafoodInputItem {
-  [key: string]: string | number | boolean | null | undefined | AuditEntry[];
+  [key: string]: string | number | boolean | null | undefined | MatchCandidate[];
 }
 
-export interface AuditEntry {
-  timestamp: string;
-  user: string;
-  action: string;
-  details: string;
-  previousValue?: string | number | Rating;
-  newValue?: string | number | Rating;
+export interface MatchCandidate {
+  uniqueId: string;
+  rating: Rating;
+  matchedKDEs: string;
+  reliabilityScore: number;
+  notes: string;
 }
 
 export interface SeafoodResultItem extends SeafoodInputItem {
@@ -42,7 +41,7 @@ export interface SeafoodResultItem extends SeafoodInputItem {
   isManual?: boolean; // Flag to indicate if the result was manually remapped
   isVerified?: boolean; // Flag to indicate if the user has locked in/confirmed the assignment
   needsReview?: boolean; // Flag for the confidence-based review queue
-  auditTrail?: AuditEntry[]; // Full history of changes for data lineage
+  candidates?: MatchCandidate[]; // Potential matches for the user to choose from
 }
 
 export interface UploadSummary {

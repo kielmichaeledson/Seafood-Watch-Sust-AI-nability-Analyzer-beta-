@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { SeafoodInputItem, SeafoodResultItem, Rating, UploadSummary, User, AuditEntry } from './types';
-import { rateSeafoodData, analyzeSheetLayout, updateAnalysisForId } from './services/geminiService';
+import { SeafoodInputItem, SeafoodResultItem, Rating, UploadSummary, User } from './types';
+import { rateSeafoodData, updateAnalysisForId } from './services/geminiService';
 import { loadDatabaseFromUrl } from './services/referenceDatabase';
 import { getUploadHistory, saveUploadToHistory, updateHistoryItemResults } from './services/historyService';
 import { performDataAudit, AuditReport } from './services/dataAuditService';
@@ -68,7 +68,7 @@ const App: React.FC = () => {
 
   const [uploadHistory, setUploadHistory] = useState<UploadSummary[]>([]);
   const [currentUploadId, setCurrentUploadId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ processed: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ processed: number; total: number; status?: string } | null>(null);
 
   // State for results view
   const [resultsViewMode, setResultsViewMode] = useState<ResultsViewMode>('table');
@@ -161,7 +161,7 @@ const App: React.FC = () => {
               type: 'GET_SHEET_DATA', 
               payload: { 
                 data, 
-                options: { type: 'binary', cellNF: false, cellText: false },
+                options: { type: 'array', cellNF: false, cellText: false },
                 sheetName: sheetNames[0]
               } 
             });
@@ -170,26 +170,24 @@ const App: React.FC = () => {
           if (type === 'GET_SHEET_DATA_SUCCESS') {
             const { dataAsArray } = payload;
             
-            // For now, we'll still do layout analysis in main thread or worker
-            // Let's stick to main thread for layout analysis but worker for parsing
             let bestSheetName = sheetNames[0];
             let bestHeaderRow = 1;
 
-            try {
-              // We only have one sheet data here, so we might need to loop if we want full AI analysis
-              // But for performance, let's just use the first sheet as a starting point
-              const sheetPreviews = [{ sheetName: sheetNames[0], data: dataAsArray.slice(0, 15) }];
-              const layout = await analyzeSheetLayout(sheetPreviews);
-              bestSheetName = layout.bestSheetName;
-              bestHeaderRow = layout.bestHeaderRow;
-            } catch (aiError) {
-              setPreviewWarning("AI auto-layout failed. Manual selection required.");
+            // Fast static heuristic to show data immediately
+            for (let i = 0; i < Math.min(dataAsArray.length, 5); i++) {
+              const row = dataAsArray[i].map((c: any) => String(c).toLowerCase());
+              if (row.some((c: string) => c.includes('species') || c.includes('common name') || c.includes('product') || c.includes('country'))) {
+                bestHeaderRow = i + 1;
+                break;
+              }
             }
 
+            // Set initial state immediately so user can see data
             setSelectedSheet(bestSheetName);
             setHeaderRowIndex(bestHeaderRow);
             setPreviewData(dataAsArray.slice(0, 15));
             setIsPreviewLoading(false);
+
             worker.terminate();
           }
 
@@ -205,11 +203,11 @@ const App: React.FC = () => {
           type: 'PARSE_FILE', 
           payload: { 
             data, 
-            options: { type: 'binary', cellNF: false, cellText: false } 
+            options: { type: 'array', cellNF: false, cellText: false } 
           } 
         });
       };
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     } catch (err: any) {
       setError(`Error starting file process: ${err.message}`);
       setAnalyzerState('upload');
@@ -248,13 +246,13 @@ const App: React.FC = () => {
           type: 'GET_SHEET_DATA', 
           payload: { 
             data, 
-            options: { type: 'binary', cellNF: false, cellText: false },
+            options: { type: 'array', cellNF: false, cellText: false },
             sheetName,
             limit: 15
           } 
         });
       };
-      reader.readAsBinaryString(currentFile);
+      reader.readAsArrayBuffer(currentFile);
     } catch (err: any) {
       setError(`Error changing sheet: ${err.message}`);
       setIsPreviewLoading(false);
@@ -267,13 +265,26 @@ const App: React.FC = () => {
 
   const handleConfirmPreview = useCallback(() => {
     setError(null);
-    if (!selectedSheet || !currentFile) return;
+    if (!currentFile) {
+        setError("No file selected.");
+        return;
+    }
+    
     setAnalyzerState('loading');
 
     const reader = new FileReader();
+    reader.onerror = () => {
+        setError("Failed to read the file. Please try again.");
+        setAnalyzerState('preview');
+    };
+
     reader.onload = async (e) => {
       const data = e.target?.result;
-      if (!data) return;
+      if (!data) {
+          setError("Failed to get file content.");
+          setAnalyzerState('preview');
+          return;
+      }
 
       const worker = new Worker(new URL('./workers/analysis.worker.ts', import.meta.url), { type: 'module' });
       
@@ -283,7 +294,14 @@ const App: React.FC = () => {
         if (type === 'GET_SHEET_DATA_SUCCESS') {
           const { dataAsArray } = payload;
           
-          // Offload transformation to worker as well
+          if (!dataAsArray || dataAsArray.length === 0) {
+              setError("The selected sheet appears to be empty.");
+              setAnalyzerState('preview');
+              worker.terminate();
+              return;
+          }
+
+          // Offload transformation to worker
           worker.postMessage({
             type: 'TRANSFORM_DATA',
             payload: { dataAsArray, headerRowIndex }
@@ -292,6 +310,14 @@ const App: React.FC = () => {
 
         if (type === 'TRANSFORM_DATA_SUCCESS') {
           const { jsonData, headers } = payload;
+          
+          if (!headers || headers.length === 0) {
+              setError("Could not identify any columns in the selected header row.");
+              setAnalyzerState('preview');
+              worker.terminate();
+              return;
+          }
+
           setOriginalData(jsonData);
           setOriginalHeaders(headers);
           setAnalyzerState('mapping');
@@ -299,23 +325,26 @@ const App: React.FC = () => {
         }
         
         if (type === 'ERROR') {
-          setError(`Worker error: ${payload}`);
+          setError(`File processing error: ${payload}`);
           setAnalyzerState('preview');
           worker.terminate();
         }
       };
 
+      // Fallback for sheet selection: use selectedSheet if exists, otherwise first sheet
+      const sheetToLoad = selectedSheet || (sheetNames.length > 0 ? sheetNames[0] : '');
+      
       worker.postMessage({ 
         type: 'GET_SHEET_DATA', 
         payload: { 
-          data, 
-          options: { type: 'binary', cellNF: false, cellText: false },
-          sheetName: selectedSheet
+          data: data as ArrayBuffer, 
+          options: { cellNF: false, cellText: false },
+          sheetName: sheetToLoad
         } 
       });
     };
-    reader.readAsBinaryString(currentFile);
-  }, [selectedSheet, headerRowIndex, currentFile]);
+    reader.readAsArrayBuffer(currentFile);
+  }, [selectedSheet, headerRowIndex, currentFile, sheetNames]);
 
   const handleConfirmMapping = useCallback((mapping: Record<string, string>) => {
     if (!originalData) return;
@@ -354,7 +383,7 @@ const App: React.FC = () => {
             return newRow;
         });
         
-        const analysisResults = await rateSeafoodData(transformedData, (p, t) => setProgress({ processed: p, total: t }), analysisAbortController.current.signal);
+        const analysisResults = await rateSeafoodData(transformedData, (p, t, s) => setProgress({ processed: p, total: t, status: s }), analysisAbortController.current.signal);
         
         const finalResults: SeafoodResultItem[] = dataToProcess.map((originalItem, index) => {
             const analysisPart = analysisResults[index];
@@ -368,14 +397,7 @@ const App: React.FC = () => {
                 reliabilityScore: analysisPart.reliabilityScore,
                 notes: analysisPart.notes,
                 needsReview,
-                auditTrail: [
-                    {
-                        timestamp: new Date().toISOString(),
-                        user: 'AI Assistant',
-                        action: 'Initial Analysis',
-                        details: `AI matched this item with ${analysisPart.reliabilityScore}% confidence. Reasoning: ${analysisPart.notes}`
-                    }
-                ]
+                candidates: analysisPart.candidates,
             };
         });
         
@@ -392,32 +414,37 @@ const App: React.FC = () => {
         setVisibleColumns(new Set([...mappedHeaders, 'uniqueId', 'rating', 'reliabilityScore']));
 
         // Persistence logic
-        const matchedCount = finalResults.filter(r => r.rating !== Rating.NA).length;
-        const matchPercentage = finalResults.length > 0 ? (matchedCount / finalResults.length) * 100 : 0;
-        const totalReliability = finalResults.reduce((acc, r) => acc + r.reliabilityScore, 0);
-        const averageReliability = finalResults.length > 0 ? totalReliability / finalResults.length : 0;
-        const ratingDistribution = finalResults.reduce<{[key in Rating]?: number}>((acc, item) => {
-            acc[item.rating] = (acc[item.rating] || 0) + 1;
-            return acc;
-        }, {});
-        
-        const uploadSummaryData: Omit<UploadSummary, 'id' | 'uploadDate'> = {
-            fileName: currentFileName, 
-            rowCount: finalResults.length, 
-            matchPercentage,
-            averageReliability, 
-            ratingDistribution, 
-            commonIssues: [],
-            fullResults: finalResults,
-            columnMapping: columnMapping,
-            originalHeaders: originalHeaders
-        };
-
-        setUploadHistory(await saveUploadToHistory(uploadSummaryData));
-        const updatedHistory = await getUploadHistory();
-        if (updatedHistory.length > 0) {
-          setCurrentUploadId(updatedHistory[0].id);
+        try {
+          const matchedCount = finalResults.filter(r => r.rating !== Rating.NA).length;
+          const matchPercentage = finalResults.length > 0 ? (matchedCount / finalResults.length) * 100 : 0;
+          const totalReliability = finalResults.reduce((acc, r) => acc + r.reliabilityScore, 0);
+          const averageReliability = finalResults.length > 0 ? totalReliability / finalResults.length : 0;
+          const ratingDistribution = finalResults.reduce<{[key in Rating]?: number}>((acc, item) => {
+              acc[item.rating] = (acc[item.rating] || 0) + 1;
+              return acc;
+          }, {});
+          
+          const uploadSummaryData: Omit<UploadSummary, 'id' | 'uploadDate'> = {
+              fileName: currentFileName, 
+              rowCount: finalResults.length, 
+              matchPercentage,
+              averageReliability, 
+              ratingDistribution, 
+              commonIssues: [],
+              fullResults: finalResults,
+              columnMapping: columnMapping,
+              originalHeaders: originalHeaders
+          };
+  
+          const newHistory = await saveUploadToHistory(uploadSummaryData);
+          setUploadHistory(newHistory);
+          if (newHistory.length > 0) {
+            setCurrentUploadId(newHistory[0].id);
+          }
+        } catch (persistErr) {
+          console.warn("Could not save to history, but showing results anyway.", persistErr);
         }
+        
         setAnalyzerState('results');
     } catch (err: any) {
         if (err.name === 'AbortError') return;
@@ -476,22 +503,12 @@ const App: React.FC = () => {
          const originalItem = updatedResults[index];
          const updatedAnalysis = await updateAnalysisForId(originalItem, newUniqueId);
          
-         const newAuditEntry = {
-           timestamp: new Date().toISOString(),
-           user: currentUser?.username || 'Unknown User',
-           action: 'Manual Correction',
-           details: `Changed Unique ID from ${originalItem.uniqueId} to ${newUniqueId}`,
-           previousValue: originalItem.uniqueId,
-           newValue: newUniqueId
-         };
-
          const updatedItem = { 
            ...originalItem, 
            ...updatedAnalysis, 
            isUpdating: false, 
            isManual: true,
            needsReview: false,
-           auditTrail: [...(originalItem.auditTrail || []), newAuditEntry]
          };
 
          setResults(prevResults => {
@@ -561,18 +578,11 @@ const App: React.FC = () => {
       if (finalIndex === -1) return finalResults;
 
       const currentItem = finalResults[finalIndex];
-      const newAuditEntry: AuditEntry = {
-        timestamp: new Date().toISOString(),
-        user: currentUser?.username || 'Unknown User',
-        action: 'Approval',
-        details: `User approved the AI assignment.`
-      };
 
       const verifiedItem = { 
         ...currentItem, 
         isVerified: true,
         needsReview: false,
-        auditTrail: [...(currentItem.auditTrail || []), newAuditEntry]
       };
       finalResults[finalIndex] = verifiedItem;
       

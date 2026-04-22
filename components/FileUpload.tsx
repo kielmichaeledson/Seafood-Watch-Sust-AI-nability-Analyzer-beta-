@@ -49,7 +49,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onProcessFile, isLoading }) => 
 
   return (
     <div className="w-full max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-lg border border-gray-200">
-      <h2 className="text-2xl font-bold text-gray-800 mb-2 text-center">Upload Your Sourcing Data</h2>
+      <h2 className="text-2xl font-bold text-gray-800 mb-2 text-center">Attach Seafood Product Dataset</h2>
       <p className="text-gray-600 mb-6 text-center">Upload a CSV or XLSX file to get started.</p>
 
       <label
@@ -82,7 +82,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onProcessFile, isLoading }) => 
           disabled={!file || isLoading}
           className="w-full sm:w-auto px-8 py-3 text-lg font-semibold text-white bg-[#00629B] rounded-md hover:bg-[#00497b] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00629B] disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
         >
-          {isLoading ? 'Processing...' : 'Upload Seafood Product Dataset'}
+          {isLoading ? 'Processing...' : 'Upload'}
         </button>
       </div>
     </div>

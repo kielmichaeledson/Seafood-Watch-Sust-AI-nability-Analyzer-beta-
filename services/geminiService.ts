@@ -1,7 +1,28 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { SeafoodInputItem, SeafoodResultItem, Rating } from "../types";
-import { getSeafoodById, findCandidates, Candidate } from "./referenceDatabase";
+import { SeafoodInputItem, SeafoodResultItem, Rating, MatchCandidate } from "../types";
+import { getSeafoodById, findCandidates, Candidate, getCanonicalTerms } from "./referenceDatabase";
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeoutId = setTimeout(() => {
+      console.warn(`AI operation timed out after ${timeoutMs}ms. Using fallback.`);
+      resolve(fallback);
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    promise.then((result) => {
+      clearTimeout(timeoutId);
+      return result;
+    }),
+    timeoutPromise,
+  ]).catch((err) => {
+    console.error("AI operation failed:", err);
+    return fallback;
+  });
+}
 
 declare var process: {
   env: {
@@ -27,7 +48,7 @@ const singleItemSchema = {
     },
     notes: {
       type: Type.STRING,
-      description: "Detailed reasoning for why this candidate was chosen, referencing specific attributes that matched.",
+      description: "Detailed reasoning for why this candidate was chosen, referencing specific attributes that matched. If the match is broad (e.g., Oregon matched to USA), explain that it is a broad match and reduce the reliability score accordingly.",
     },
   },
   required: ["uniqueId", "rating", "reliabilityScore", "notes"],
@@ -52,14 +73,23 @@ Terminology Mapping Rules:
    - 'Trawls' is a broad category that includes 'Bottom trawls', 'Midwater trawls', 'Beam trawls'.
    - 'Suripera' is a specific net method and should be matched exactly if a 'Suripera' rating exists.
 
-Matching Priority:
-1. Only use IDs from the provided 'ratings' list or 'N/A'. 
-2. Match Species name, Country/Location, and Production Method as closely as possible. 
-3. If the input 'Certification' column contains any text indicating MSC (Marine Stewardship Council), ASC (Aquaculture Stewardship Council), or BAP (Best Aquaculture Practices), including specific certification codes (e.g., 'MSC-C-52577', 'ASC-A-12345'), you MUST set the UniqueID to 'N/A' and the rating to 'Certified'.
-4. For 'notes', provide a clear rationale why this rating was chosen, referencing specific attributes that matched or why it was flagged as Certified (mention the specific code if found).
-5. Return a JSON array of results in the exact same order as the input items.`;
+2. Location & Body of Water (FAO Areas):
+   - Understand and utilize FAO Major Fishing Area names and numeric codes (e.g., 'FAO 27' = 'Northeast Atlantic', 'FAO 67' = 'Northeast Pacific').
+   - Map numeric codes or FAO names to the corresponding EconomicZone or SubnationalArea in the database.
 
-type AnalysisResult = Pick<SeafoodResultItem, 'uniqueId' | 'matchedKDEs' | 'rating' | 'reliabilityScore' | 'notes' | 'isManual'>;
+Matching Priority:
+1. CERTIFICATIONS TAKE ABSOLUTE PRECEDENCE: If the input (especially the 'Certification' column) contains ANY text indicating MSC (Marine Stewardship Council), ASC (Aquaculture Stewardship Council), or BAP (Best Aquaculture Practices), you MUST set the UniqueID to 'N/A' and the rating to 'Certified'. This applies even if a Seafood Watch rating seems to match.
+2. Only use IDs from the provided 'ratings' list or 'N/A'. 
+3. Match Species name, Country/Location, and Production Method as closely as possible. 
+4. RELIABILITY SCORING: 
+   - 100% only for PERFECT matches on all KDEs (Species, Country, Subnational, Method, Production Type).
+   - Broad matches (e.g., Oregon input vs USA rating, or "Purse seine" input vs specific "Purse seine" rating) should have reliability reduced (e.g., 85-95%).
+   - If a KDE is missing in the input but present in the rating, reduce reliability.
+   - If a KDE is present in the input but broad in the rating, reduce reliability.
+5. For 'notes', provide a clear rationale why this rating was chosen, referencing specific attributes that matched or why it was flagged as Certified (mention the specific certification found).
+6. Return a JSON array of results in the exact same order as the input items.`;
+
+type AnalysisResult = Pick<SeafoodResultItem, 'uniqueId' | 'matchedKDEs' | 'rating' | 'reliabilityScore' | 'notes' | 'isManual' | 'candidates'>;
 
 // PERFORMANCE CONFIGURATION
 const BATCH_SIZE = 20;
@@ -71,6 +101,7 @@ interface MinifiedInput {
     spec: string;
     cntry: string;
     sub: string;
+    bow: string;
     mthd: string;
     fw: string;
     cert: string;
@@ -98,7 +129,7 @@ async function rateBatch(items: { input: SeafoodInputItem; index: number }[]): P
 
     const failedResult: AnalysisResult = {
         uniqueId: "N/A",
-        matchedKDEs: "Analysis Failed",
+        matchedKDEs: "N/A",
         rating: Rating.NA,
         reliabilityScore: 0,
         notes: "An error occurred during analysis.",
@@ -109,6 +140,7 @@ async function rateBatch(items: { input: SeafoodInputItem; index: number }[]): P
             species: String(item.input['Common name'] || ''),
             country: String(item.input['Source country'] || ''),
             subnational: String(item.input['Subnational area'] || ''),
+            bodyOfWater: String(item.input['Body of water'] || ''),
             method: String(item.input['Production Method'] || ''),
             farmedWild: String(item.input['Wild or Farmed'] || '')
         }, 5);
@@ -120,6 +152,7 @@ async function rateBatch(items: { input: SeafoodInputItem; index: number }[]): P
                 spec: String(item.input['Common name'] || ''),
                 cntry: String(item.input['Source country'] || ''),
                 sub: String(item.input['Subnational area'] || ''),
+                bow: String(item.input['Body of water'] || ''),
                 mthd: String(item.input['Production Method'] || ''),
                 fw: String(item.input['Wild or Farmed'] || ''),
                 cert: String(item.input['Certification'] || '')
@@ -149,7 +182,7 @@ async function rateBatch(items: { input: SeafoodInputItem; index: number }[]): P
 
             const results: any[] = JSON.parse(response.text.trim());
             
-            return results.map(result => {
+            return results.map((result, idx) => {
                 const uniqueId = result.uniqueId || "N/A";
                 let matchedKDEs = "N/A";
                 let rating = (result.rating as Rating) || Rating.NA;
@@ -174,12 +207,25 @@ async function rateBatch(items: { input: SeafoodInputItem; index: number }[]): P
                     finalNotes = `Match confidence too low (${reliability}%) to provide a definitive rating. Original suggestion was ${uniqueId}.`;
                 }
 
+                // Attach candidates for user selection in UI
+                const itemCandidates = batchWithCandidates[idx].ratings.map(r => {
+                    const official = getSeafoodById(r.id);
+                    return {
+                        uniqueId: r.id,
+                        rating: (r.rating as Rating) || Rating.NA,
+                        matchedKDEs: official?.matchedKDEs || r.desc,
+                        reliabilityScore: r.id === finalUniqueId ? reliability : 0, // AI's confidence for this specific one is not directly returned for all, but we can show them
+                        notes: r.desc
+                    };
+                });
+
                 return {
                     uniqueId: finalUniqueId,
                     matchedKDEs, 
                     rating: finalRating,
                     reliabilityScore: reliability,
                     notes: finalNotes,
+                    candidates: itemCandidates
                 };
             });
 
@@ -197,7 +243,7 @@ async function rateBatch(items: { input: SeafoodInputItem; index: number }[]): P
 
 export async function rateSeafoodData(
   data: SeafoodInputItem[],
-  onProgress: (processed: number, total: number) => void,
+  onProgress: (processed: number, total: number, status?: string) => void,
   signal?: AbortSignal
 ): Promise<AnalysisResult[]> {
   const total = data.length;
@@ -217,6 +263,7 @@ export async function rateSeafoodData(
 
   // 1b. Pre-Normalization Phase (AI-Driven)
   // This translates all unique species, country and method terms into canonical database terms once.
+  onProgress(0, total, "Standardizing species and location data...");
   const uniqueSpecies = Array.from(new Set(uniqueItems.map(i => String(i['Common name'] || '').trim()).filter(Boolean)));
   const uniqueCountries = Array.from(new Set(uniqueItems.map(i => String(i['Source country'] || '').trim()).filter(Boolean)));
   const uniqueMethods = Array.from(new Set(uniqueItems.map(i => String(i['Production Method'] || '').trim()).filter(Boolean)));
@@ -234,69 +281,88 @@ export async function rateSeafoodData(
   const uniqueTotal = uniqueItems.length;
   const uniqueResults: AnalysisResult[] = new Array(uniqueTotal);
   let totalRowsFullyProcessed = 0;
+  let currentStatus = "Standardizing...";
 
-  const updateProgressSmoothly = (newTotalProcessed: number) => {
-    while (totalRowsFullyProcessed < newTotalProcessed) {
-      totalRowsFullyProcessed++;
-      onProgress(totalRowsFullyProcessed, total);
-    }
+  // Atomic-like update to progress to avoid race conditions during parallel AI batches
+  const reportProgress = (newlyProcessed: number, status?: string) => {
+    if (status) currentStatus = status;
+    totalRowsFullyProcessed += newlyProcessed;
+    // Cap at total to prevent UI overflow like "146 of 99"
+    const displayProcessed = Math.min(totalRowsFullyProcessed, total);
+    onProgress(displayProcessed, total, currentStatus);
   };
 
   // 2. Short-Circuit Phase
   const itemsRequiringAI: { input: SeafoodInputItem; index: number }[] = [];
 
-  // Parallelize database checks
-  await Promise.all(normalizedUniqueItems.map(async (item, uIdx) => {
-      const originalItem = uniqueItems[uIdx];
+  // Report that we've started initial checks
+  onProgress(0, total, "Preparation: Cross-referencing database...");
+
+  // Process short-circuits in batches
+  const CHECK_BATCH_SIZE = 50;
+  for (let i = 0; i < normalizedUniqueItems.length; i += CHECK_BATCH_SIZE) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       
-      // 2a. Check for explicit certifications first
-      const cert = String(item['Certification'] || '').toUpperCase();
-      if (cert.includes('MSC') || cert.includes('ASC') || cert.includes('BAP')) {
-          uniqueResults[uIdx] = {
-              uniqueId: "N/A",
-              matchedKDEs: "N/A",
-              rating: Rating.Certified,
-              reliabilityScore: 100,
-              notes: `Certified product detected via certification column: ${item['Certification']}`,
-          };
-          return;
-      }
+      const batch = normalizedUniqueItems.slice(i, i + CHECK_BATCH_SIZE);
+      let batchProcessedRows = 0;
+      
+      await Promise.all(batch.map(async (item, bIdx) => {
+          const uIdx = i + bIdx;
+          const sig = getRowSignature(uniqueItems[uIdx]);
+          const rowCount = signatureToIndices.get(sig)?.length || 0;
+          
+          // 2a. Certifications
+          const cert = String(item['Certification'] || '').toUpperCase();
+          const isCertified = cert.includes('MSC') || cert.includes('ASC') || cert.includes('BAP') ||
+                              cert.includes('MARINE STEWARDSHIP COUNCIL') || cert.includes('AQUACULTURE STEWARDSHIP COUNCIL') ||
+                              cert.includes('BEST AQUACULTURE PRACTICES');
 
-      // 2b. Check for perfect database matches
-      const candidates = await findCandidates({
-          species: String(item['Common name'] || ''),
-          country: String(item['Source country'] || ''),
-          subnational: String(item['Subnational area'] || ''),
-          method: String(item['Production Method'] || ''),
-          farmedWild: String(item['Wild or Farmed'] || '')
-      }, 1);
+          if (isCertified) {
+              uniqueResults[uIdx] = {
+                  uniqueId: "N/A", matchedKDEs: "N/A", rating: Rating.Certified, reliabilityScore: 100,
+                  notes: `Certified: ${item['Certification']}`,
+              };
+              batchProcessedRows += rowCount;
+              return;
+          }
 
-      if (candidates.length > 0 && candidates[0].score >= 160) {
-          const top = candidates[0];
-          const type = top.record.ProductionMethod === 'A' ? 'Farmed' : 'Wild';
-          uniqueResults[uIdx] = {
-              uniqueId: top.record.UniqueID,
-              matchedKDEs: top.description,
-              rating: getSeafoodById(top.record.UniqueID)?.rating || Rating.NA,
-              reliabilityScore: 100,
-              notes: `Direct database match confirmed for ${top.record.CommonName} (${type}) from ${top.record.EconomicZone || top.record.SubnationalArea || 'Global'} using ${top.record.Methods}.`,
-          };
-      } else {
-          itemsRequiringAI.push({ input: item, index: uIdx });
-      }
-  }));
+          // 2b. Perfect matches
+          const candidates = await findCandidates({
+              species: String(item['Common name'] || ''),
+              country: String(item['Source country'] || ''),
+              subnational: String(item['Subnational area'] || ''),
+              bodyOfWater: String(item['Body of water'] || ''),
+              method: String(item['Production Method'] || ''),
+              farmedWild: String(item['Wild or Farmed'] || '')
+          }, 5, true);
 
-  // Update progress after parallel checks
-  let initialProcessedCount = 0;
-  uniqueResults.forEach((res, uIdx) => {
-    if (res) {
-      const sig = getRowSignature(uniqueItems[uIdx]);
-      initialProcessedCount += signatureToIndices.get(sig)?.length || 0;
-    }
-  });
-  updateProgressSmoothly(initialProcessedCount);
+          if (candidates.length > 0 && candidates[0].isPerfect) {
+              const top = candidates[0];
+              uniqueResults[uIdx] = {
+                  uniqueId: top.record.UniqueID, matchedKDEs: top.description,
+                  rating: getSeafoodById(top.record.UniqueID)?.rating || Rating.NA,
+                  reliabilityScore: 100,
+                  notes: `Direct match verified.`,
+                  candidates: candidates.map(c => ({
+                      uniqueId: c.record.UniqueID, rating: getSeafoodById(c.record.UniqueID)?.rating || Rating.NA,
+                      matchedKDEs: c.description, reliabilityScore: c.isPerfect ? 100 : 0, notes: c.description
+                  }))
+              };
+              batchProcessedRows += rowCount;
+          } else {
+              itemsRequiringAI.push({ input: item, index: uIdx });
+          }
+      }));
+
+      reportProgress(batchProcessedRows, "Correlation: Matching against Seafood Watch...");
+  }
 
   // 3. AI Analysis Phase
+  if (itemsRequiringAI.length > 0) {
+    onProgress(totalRowsFullyProcessed, total, `Inference: Analyzing ${itemsRequiringAI.length} complex items...`);
+  }
+
+  // We process AI batches in parallel but increment counter carefully
   for (let i = 0; i < itemsRequiringAI.length; i += (BATCH_SIZE * MAX_CONCURRENT_BATCHES)) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -307,7 +373,10 @@ export async function rateSeafoodData(
         
         const batch = itemsRequiringAI.slice(start, start + BATCH_SIZE);
         
-        const p = rateBatch(batch).then(results => {
+        const p = withTimeout(rateBatch(batch), 30000, batch.map(() => ({
+            uniqueId: "N/A", matchedKDEs: "N/A", rating: Rating.NA, reliabilityScore: 0,
+            notes: "Analysis Timeout: The AI took too long to respond for this row.",
+        }))).then(results => {
             let newlyProcessedCount = 0;
             results.forEach((res, idx) => {
                 const globalBatchIdx = start + idx;
@@ -317,7 +386,7 @@ export async function rateSeafoodData(
                 const sig = getRowSignature(uniqueItems[originalUniqueIdx]);
                 newlyProcessedCount += signatureToIndices.get(sig)?.length || 0;
             });
-            updateProgressSmoothly(totalRowsFullyProcessed + newlyProcessedCount);
+            reportProgress(newlyProcessedCount, "Inference: Processing AI responses...");
             return results;
         });
         
@@ -341,7 +410,7 @@ export async function rateSeafoodData(
       });
   });
 
-  onProgress(total, total);
+  onProgress(total, total, "Analysis complete.");
   return finalResults;
 }
 
@@ -351,6 +420,18 @@ export async function updateAnalysisForId(
 ): Promise<AnalysisResult> {
     const normalizedId = newId.trim().toLowerCase();
     
+    // Handle "N/A" or "None" to remove match
+    if (normalizedId === 'n/a' || normalizedId === 'none' || normalizedId === '') {
+        return {
+            uniqueId: "N/A",
+            matchedKDEs: "N/A",
+            rating: Rating.NA,
+            reliabilityScore: 0,
+            notes: "Match removed by user.",
+            isManual: true,
+        };
+    }
+
     // 1. Check if it's a valid ID in the database first (authoritative)
     const officialRecord = getSeafoodById(newId);
     if (officialRecord) {
@@ -391,45 +472,6 @@ export async function updateAnalysisForId(
     };
 }
 
-export async function getColumnMapping(
-  mappableFields: string[],
-  fileHeaders: string[]
-): Promise<{ mapping: Record<string, string>; isFallback: boolean }> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const properties: Record<string, object> = {};
-  mappableFields.forEach(field => {
-    properties[field] = {
-      type: Type.STRING,
-      enum: [...fileHeaders, 'N/A'],
-      description: `Best column for '${field}'.`
-    };
-  });
-  
-  const schema = {
-    type: Type.OBJECT,
-    properties: properties,
-    required: mappableFields,
-  };
-
-  const systemInstruction = `You are an expert data mapping specialist. Map required seafood sourcing fields to file headers. Synonyms: 'Origin' = 'Source Country', 'Gear' = 'Production Method', 'Species' = 'Common Name', 'Cert' = 'Certification', 'Eco-label' = 'Certification'. Use 'N/A' if no match exists.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Map: ${JSON.stringify(mappableFields)} to ${JSON.stringify(fileHeaders)}`,
-      config: { 
-          systemInstruction,
-          responseMimeType: "application/json", 
-          responseSchema: schema, 
-          temperature: 0 
-      },
-    });
-    return { mapping: JSON.parse(response.text.trim()), isFallback: false };
-  } catch {
-    return { mapping: performStaticMapping(mappableFields, fileHeaders), isFallback: true };
-  }
-}
-
 async function preNormalizeKDEs(
     species: string[],
     countries: string[],
@@ -439,96 +481,102 @@ async function preNormalizeKDEs(
         return { species: {}, countries: {}, methods: {} };
     }
 
+    const canonical = getCanonicalTerms();
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const schema = {
         type: Type.OBJECT,
         properties: {
             species: {
                 type: Type.OBJECT,
-                description: "Map of original species names to canonical Seafood Watch names (e.g., 'Sea Bass' -> 'Seabass').",
+                description: "Map of original species names to canonical Seafood Watch names.",
                 additionalProperties: { type: Type.STRING }
             },
             countries: {
                 type: Type.OBJECT,
-                description: "Map of original country names to canonical Seafood Watch names (e.g., 'US' -> 'United States').",
+                description: "Map of original country names to canonical Seafood Watch names.",
                 additionalProperties: { type: Type.STRING }
             },
             methods: {
                 type: Type.OBJECT,
-                description: "Map of original production methods to canonical Seafood Watch names (e.g., 'Trolls' -> 'Trolling lines').",
+                description: "Map of original production methods to canonical Seafood Watch names.",
                 additionalProperties: { type: Type.STRING }
             }
         },
         required: ["species", "countries", "methods"]
     };
 
-    const systemInstruction = `You are a data normalization expert for the Seafood Watch database. 
-    Your task is to take a list of unique species names, country names, and production methods from a spreadsheet and map them to their canonical equivalents used in the Seafood Watch database.
+    const systemInstruction = `You are a data normalization expert for Seafood Watch. Your primary goal is to take a list of raw species names, country names, and production methods and clean/standardize them so they perfectly match the provided Canonical Seafood Watch reference lists.
     
-    Canonical Species Examples: 'Atlantic Salmon', 'Yellowfin Tuna', 'Greater Amberjack', 'Pacific Cod', 'Blue Swimming Crab'.
-    Canonical Country Examples: 'United States', 'Vietnam', 'China', 'Thailand', 'Canada', 'Mexico', 'Worldwide'.
-    Canonical Method Examples: 'Trolling lines', 'Pots', 'Set gillnets', 'Set longlines', 'Marine net pen', 'Ponds', 'Diving'.
-    
-    If a term is already canonical or you are unsure, map it to itself.`;
+    ### CANONICAL REFERENCE (TARGET NAMES):
+    - SPECIES: ${JSON.stringify(canonical.species.slice(0, 300))} ... (and others)
+    - COUNTRIES: ${JSON.stringify(canonical.countries)}
+    - METHODS: ${JSON.stringify(canonical.methods)}
+
+    ### DATA CLEANING RULES:
+    1. EXPLICIT MAPPING: Use the Canonical lists above as your ONLY source for target names. If an input matches a canonical term (even partially or as a synonym), map it to that canonical term.
+    2. COMMON ALIASES: 
+       - Always convert 'US', 'USA', 'EEZ-USA' -> 'United States'.
+       - Always convert 'VN', 'Viet Nam' -> 'Vietnam'.
+       - Always convert 'CN' -> 'China'.
+       - Always convert 'TH' -> 'Thailand'.
+       - Always convert 'CA' -> 'Canada'.
+    3. FAO AREAS:
+       - If you see a number like '27', '67', '71', or 'Area 27', 'FAO 27', convert it to the full region name provided in the Countries list (e.g., 'Northeast Atlantic').
+    4. SPECIES NAMES:
+       - Remove marketing fluff (e.g., 'Fresh frozen', 'Premium', 'Filet'). 
+       - Standardize names (e.g., 'Chilean Bass' -> 'Patagonian toothfish').
+    5. METHODS:
+       - Map specific gear to the broad families in the Methods list (e.g., 'Traps' -> 'Pots').
+       
+    If a term is already in the canonical list or is totally ambiguous, return it as-is. Return only the JSON mapping as requested.`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: `Normalize these terms:\nSpecies: ${JSON.stringify(species)}\nCountries: ${JSON.stringify(countries)}\nMethods: ${JSON.stringify(methods)}`,
-            config: {
-                systemInstruction,
-                responseMimeType: "application/json",
-                responseSchema: schema,
-                temperature: 0.0
-            }
-        });
+        const aiPromise = (async () => {
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: `Normalize these terms:\nSpecies: ${JSON.stringify(species)}\nCountries: ${JSON.stringify(countries)}\nMethods: ${JSON.stringify(methods)}`,
+                config: {
+                    systemInstruction,
+                    responseMimeType: "application/json",
+                    responseSchema: schema,
+                    temperature: 0.0
+                }
+            });
+            return JSON.parse(response.text.trim());
+        })();
 
-        return JSON.parse(response.text.trim());
+        return await withTimeout(aiPromise, 15000, { species: {}, countries: {}, methods: {} });
     } catch (error) {
         console.warn("Pre-normalization failed, continuing with raw values.", error);
         return { species: {}, countries: {}, methods: {} };
     }
 }
 
-export async function analyzeSheetLayout(
-  sheetPreviews: { sheetName: string; data: (string | number)[][] }[]
-): Promise<{ bestSheetName: string; bestHeaderRow: number }> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const schema = {
-    type: Type.OBJECT,
-    properties: { 
-        bestSheetName: { type: Type.STRING }, 
-        bestHeaderRow: { type: Type.NUMBER } 
-    },
-    required: ["bestSheetName", "bestHeaderRow"],
+export function performStaticMapping(mappableFields: string[], fileHeaders: string[]): Record<string, string> {
+  const mapping: Record<string, string> = {};
+  const lowerHeaders = fileHeaders.map(h => h.replace(/[\s_]/g, '').toLowerCase());
+  
+  const keywordMap: Record<string, string[]> = {
+    'Wild or Farmed': ['productionmethod', 'wild', 'farm', 'type', 'source'],
+    'Common name': ['commonname', 'species', 'commonname', 'product', 'item'],
+    'Scientific name': ['scientificname', 'latin', 'scientific'],
+    'Source country': ['economiczone', 'eez', 'country', 'origin'],
+    'Subnational area': ['subnationalarea', 'subnational', 'state', 'province', 'area'],
+    'Body of water': ['bows', 'faomajors', 'bodyofwater', 'water', 'bow'],
+    'Production Method': ['methods', 'method', 'gear'],
+    'Certification': ['harvestcertification', 'certification', 'label', 'ecolabel']
   };
 
-  const systemInstruction = `Expert spreadsheet analyst. Identify the main seafood sourcing sheet and the 1-based index of the header row.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Analyze layout: ${JSON.stringify(sheetPreviews)}`,
-      config: { 
-          systemInstruction,
-          responseMimeType: "application/json", 
-          responseSchema: schema, 
-          temperature: 0 
-      },
-    });
-    return JSON.parse(response.text.trim());
-  } catch (err) {
-    return { bestSheetName: sheetPreviews[0]?.sheetName || '', bestHeaderRow: 1 };
-  }
-}
-
-function performStaticMapping(mappableFields: string[], fileHeaders: string[]): Record<string, string> {
-  const mapping: Record<string, string> = {};
-  const lowerHeaders = fileHeaders.map(h => h.toLowerCase());
-  
   mappableFields.forEach(field => {
-    const fLow = field.toLowerCase();
-    const idx = lowerHeaders.findIndex(h => h.includes(fLow) || fLow.includes(h));
+    const keywords = keywordMap[field] || [field.toLowerCase().replace(/[\s_]/g, '')];
+    
+    // Check for exact matches or high-confidence startsWith/includes
+    let idx = lowerHeaders.findIndex(h => keywords.includes(h));
+    
+    if (idx === -1) {
+      idx = lowerHeaders.findIndex(h => keywords.some(k => h.includes(k) || k.includes(h)));
+    }
+    
     mapping[field] = idx !== -1 ? fileHeaders[idx] : 'N/A';
   });
   return mapping;

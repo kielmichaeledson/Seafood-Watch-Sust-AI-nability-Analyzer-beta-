@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { getColumnMapping } from '../services/geminiService';
+import { performStaticMapping } from '../services/geminiService';
 import { Info, Eye } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,8 +15,6 @@ interface ColumnMapperProps {
 
 const ColumnMapper: React.FC<ColumnMapperProps> = ({ fileHeaders, mappableFields, originalData, onConfirm, onCancel }) => {
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [isAutoMapping, setIsAutoMapping] = useState<boolean>(true);
-  const [autoMapError, setAutoMapError] = useState<boolean>(false);
   const [hoveredHeader, setHoveredHeader] = useState<string | null>(null);
 
   const getColumnPreview = (header: string, count: number = 3) => {
@@ -41,29 +39,8 @@ const ColumnMapper: React.FC<ColumnMapperProps> = ({ fileHeaders, mappableFields
   };
 
   useEffect(() => {
-    const generateMapping = async () => {
-      setIsAutoMapping(true);
-      setAutoMapError(false);
-      try {
-        const { mapping: newMapping, isFallback } = await getColumnMapping(mappableFields, fileHeaders);
-        if (isFallback) {
-          setAutoMapError(true);
-        }
-        setMapping(newMapping);
-      } catch (err: any) {
-        console.error("Failed to get column mapping:", err);
-        setAutoMapError(true);
-        const initialMapping: Record<string, string> = {};
-        mappableFields.forEach(field => {
-            initialMapping[field] = 'N/A';
-        });
-        setMapping(initialMapping);
-      } finally {
-        setIsAutoMapping(false);
-      }
-    };
-
-    generateMapping();
+    const staticMapping = performStaticMapping(mappableFields, fileHeaders);
+    setMapping(staticMapping);
   }, [fileHeaders, mappableFields]);
 
   const handleMappingChange = (field: string, header: string) => {
@@ -72,23 +49,13 @@ const ColumnMapper: React.FC<ColumnMapperProps> = ({ fileHeaders, mappableFields
 
   return (
     <div className="w-full max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-lg border border-gray-200">
-      <h2 className="text-2xl font-bold text-gray-800 mb-6">Map Your Data Columns</h2>
-      
-      {autoMapError && (
-        <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6" role="alert">
-          <p className="font-bold">AI Mapping Unsuccessful</p>
-          <p>We couldn't use AI to map your columns, so we've fallen back to basic keyword matching. Please review manually.</p>
-        </div>
-      )}
+      <div className="flex justify-between items-start mb-6">
+        <h2 className="text-2xl font-bold text-gray-800">Assign Data Columns</h2>
+        <p className="text-sm text-gray-500 mt-1 max-w-md">Verify the keyword associations below or manually select the correct headers from your file.</p>
+      </div>
 
-      {isAutoMapping ? (
-        <div className="flex flex-col items-center justify-center space-y-4 my-12">
-            <div className="w-12 h-12 border-4 border-[#62B6F3] border-dashed rounded-full animate-spin"></div>
-            <p className="text-gray-600 text-lg">AI is analyzing your columns...</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {mappableFields.map(field => (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {mappableFields.map(field => (
             <div key={field} className="flex flex-col relative">
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-sm font-medium text-gray-700">
@@ -127,24 +94,18 @@ const ColumnMapper: React.FC<ColumnMapperProps> = ({ fileHeaders, mappableFields
               <select
                 value={mapping[field] || 'N/A'}
                 onChange={(e) => handleMappingChange(field, e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${mapping[field] && mapping[field] !== 'N/A' ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}
+                className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-bold ${mapping[field] && mapping[field] !== 'N/A' ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}
               >
-                <option value="N/A">-- Select Column --</option>
+                <option value="N/A" className="font-bold">-- Select Column --</option>
                 {fileHeaders.map(header => (
-                  <option key={header} value={header}>
-                    {header} ({getColumnPreview(header, 2)})
+                  <option key={header} value={header} className="font-bold">
+                    {header}
                   </option>
                 ))}
               </select>
-              {mapping[field] && mapping[field] !== 'N/A' && (
-                <p className="mt-1 text-xs text-gray-500 italic truncate">
-                  Preview: {getColumnPreview(mapping[field], 3)}
-                </p>
-              )}
             </div>
           ))}
         </div>
-      )}
 
       <div className="mt-8 flex justify-end gap-4">
         <button
@@ -155,8 +116,7 @@ const ColumnMapper: React.FC<ColumnMapperProps> = ({ fileHeaders, mappableFields
         </button>
         <button
           onClick={() => onConfirm(mapping)}
-          disabled={isAutoMapping}
-          className="px-6 py-2 font-semibold text-white bg-[#00629B] rounded-md hover:bg-[#00497b] focus:outline-none disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-200"
+          className="px-6 py-2 font-semibold text-white bg-[#00629B] rounded-md hover:bg-[#00497b] focus:outline-none transition-colors duration-200"
         >
           Confirm & Analyze Data
         </button>

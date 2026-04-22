@@ -60,24 +60,19 @@ const DataPreview: React.FC<DataPreviewProps> = ({
     }
   };
 
-  if (isAnalyzing) {
-    return (
-      <div className="w-full max-w-5xl mx-auto bg-white p-8 rounded-lg shadow-lg border border-gray-200 flex flex-col items-center justify-center space-y-4 my-8 min-h-[400px]">
-        <div className="w-16 h-16 border-4 border-[#62B6F3] border-dashed rounded-full animate-spin"></div>
-        <h2 className="text-2xl font-bold text-gray-800">Analyzing Your File...</h2>
-        <p className="text-lg text-gray-600 text-center">
-          The AI is examining your spreadsheet to find the most relevant data.<br/>
-          This helps by auto-selecting the correct sheet and header row for you.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="w-full max-w-5xl mx-auto bg-white p-8 rounded-lg shadow-lg border border-gray-200">
-      <h2 className="text-2xl font-bold text-gray-800 mb-2">Preview and Configure Your Data</h2>
+      <div className="flex justify-between items-start mb-2">
+        <h2 className="text-2xl font-bold text-gray-800">Preview and Configure Your Data</h2>
+        {isAnalyzing && (
+          <div className="flex items-center text-blue-600 text-sm font-medium animate-pulse">
+            <div className="w-4 h-4 border-2 border-blue-600 border-dashed rounded-full animate-spin mr-2"></div>
+            AI is optimizing layout...
+          </div>
+        )}
+      </div>
       <p className="text-gray-600 mb-6">
-        The AI has suggested a sheet and header row. Please confirm they are correct by clicking the desired header row in the preview below or by changing the row number. The highlighted row will be used as the column headers.
+        Confirm the sheet and header row are correct. Click a row in the preview to set it as the header. The highlighted row will be used as the column headers.
       </p>
 
       {warning && (

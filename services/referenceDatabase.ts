@@ -173,11 +173,39 @@ export interface Candidate {
     record: SeafoodRecord;
     score: number;
     description: string;
+    isPerfect: boolean;
+}
+
+export function getCanonicalTerms(): { species: string[]; countries: string[]; methods: string[] } {
+  initializeDatabase();
+  const species = new Set<string>();
+  const countries = new Set<string>();
+  const methods = new Set<string>();
+
+  databaseArray.forEach(record => {
+    if (record.CommonName) species.add(record.CommonName);
+    if (record.ScientificName) species.add(record.ScientificName);
+    if (record.EconomicZone) countries.add(record.EconomicZone);
+    if (record.Methods) {
+        // Methods can sometimes be comma separated in other datasets, but here we split by typical separators if any
+        record.Methods.split(/[;,]/).forEach(m => {
+            const trimmed = m.trim();
+            if (trimmed && trimmed.length > 2) methods.add(trimmed);
+        });
+    }
+  });
+
+  return {
+    species: Array.from(species).sort(),
+    countries: Array.from(countries).sort(),
+    methods: Array.from(methods).sort()
+  };
 }
 
 export async function findCandidates(
-    criteria: { species?: string; country?: string; subnational?: string; method?: string; farmedWild?: string }, 
-    limit: number = 5
+    criteria: { species?: string; country?: string; subnational?: string; method?: string; farmedWild?: string; bodyOfWater?: string }, 
+    limit: number = 5,
+    skipAI: boolean = false
 ): Promise<Candidate[]> {
     initializeDatabase();
 
@@ -186,6 +214,7 @@ export async function findCandidates(
     const subnational = (criteria.subnational || '').toLowerCase().trim();
     const method = (criteria.method || '').toLowerCase().trim();
     const farmedWild = (criteria.farmedWild || '').toLowerCase().trim();
+    const bodyOfWater = (criteria.bodyOfWater || '').toLowerCase().trim();
 
     // Market Name Synonyms (Internal mapping for common mismatches)
     const synonymMap: Record<string, string[]> = {
@@ -258,55 +287,99 @@ export async function findCandidates(
     const finalCandidates = await Promise.all(sortedSpeciesCandidates.map(async (c) => {
         const record = c.record;
         let score = c.score;
+        let isPerfect = c.score === 100; // Species must be perfect to start
+        
         const recZone = record.EconomicZone.toLowerCase();
         const recSub = record.SubnationalArea.toLowerCase();
         const recMethod = record.Methods.toLowerCase();
 
-        // 2. Country Match -> EconomicZone (Semantic/AI-Driven)
-        if (country) {
-            const match = await evaluateSemanticMatch(country, recZone, 'country');
+        // 2. Country/Location Match -> EconomicZone (Semantic/AI-Driven)
+        // We combine country and body of water (including FAO areas) for a better location match
+        const locationInput = [country, bodyOfWater].filter(Boolean).join(' ');
+        if (locationInput) {
+            const match = skipAI 
+                ? (locationInput === recZone || recZone.includes(locationInput) || locationInput.includes(recZone) ? { relationship: 'related' as const } : { relationship: 'distinct' as const })
+                : await evaluateSemanticMatch(locationInput, recZone, 'country');
             
             if (match.relationship === 'exact' || match.relationship === 'equivalent') {
                 score += 60;
             } else if (match.relationship === 'related') {
                 score += 30;
+                isPerfect = false;
             } else if (recZone === 'worldwide' || recZone === 'global') {
                 score += 30;
+                isPerfect = false;
             } else {
-                // Strict mismatch: if country is provided and doesn't match EconomicZone
-                return { record, score: 0, description: formatKDE(record) };
+                // Strict mismatch: if location is provided and doesn't match EconomicZone
+                return { record, score: 0, description: formatKDE(record), isPerfect: false };
             }
+        } else if (recZone && recZone !== 'worldwide' && recZone !== 'global') {
+            // Database has a specific country but input doesn't
+            isPerfect = false;
         }
 
         // 3. Subnational Match -> SubnationalArea
-        if (subnational) {
-            if (recSub === subnational) score += 60;
-            else if (recSub.includes(subnational)) score += 30;
+        if (subnational && recSub && recSub !== 'n/a' && recSub !== 'global' && recSub !== 'worldwide') {
+            if (recSub === subnational) {
+                score += 60;
+            } else if (recSub.includes(subnational) || subnational.includes(recSub)) {
+                score += 30;
+                isPerfect = false;
+            } else {
+                // Both have specific subnational areas and they don't match
+                return { record, score: 0, description: formatKDE(record), isPerfect: false };
+            }
+        } else if (subnational) {
+            // Input has subnational but DB is broad (empty/global)
+            score += 30;
+            isPerfect = false;
+        } else if (recSub && recSub !== 'n/a' && recSub !== 'global' && recSub !== 'worldwide') {
+            // DB has subnational but input doesn't
+            isPerfect = false;
         }
 
         // 4. Method Match -> Methods (Semantic/AI-Driven)
         if (method) {
-            const match = await evaluateSemanticMatch(method, recMethod, 'method');
+            const match = skipAI
+                ? (method === recMethod || recMethod.includes(method) || method.includes(recMethod) ? { relationship: 'related' as const } : { relationship: 'distinct' as const })
+                : await evaluateSemanticMatch(method, recMethod, 'method');
             
             if (match.relationship === 'exact' || match.relationship === 'equivalent') {
                 score += 50;
             } else if (match.relationship === 'related') {
                 score += 25;
+                isPerfect = false;
+            } else {
+                // Method mismatch (different families)
+                return { record, score: 0, description: formatKDE(record), isPerfect: false };
             }
+        } else if (recMethod && recMethod !== 'n/a' && recMethod !== 'unknown') {
+            // DB has method but input doesn't
+            isPerfect = false;
         }
 
         // 5. Production Type Match -> ProductionMethod ('A' for Farmed, 'F' for Wild)
         if (farmedWild) {
           const isFarmedInput = farmedWild.includes('farm') || farmedWild.includes('aqua');
           const isWildInput = farmedWild.includes('wild') || farmedWild.includes('fish');
-          if (isFarmedInput && record.ProductionMethod === 'A') score += 40;
-          else if (isWildInput && record.ProductionMethod === 'F') score += 40;
+          const isFarmedDB = record.ProductionMethod === 'A';
+          const isWildDB = record.ProductionMethod === 'F';
+
+          if (isFarmedInput && isFarmedDB) {
+              score += 40;
+          } else if (isWildInput && isWildDB) {
+              score += 40;
+          } else {
+              // Strict mismatch on production type
+              return { record, score: 0, description: formatKDE(record), isPerfect: false };
+          }
         }
 
         return {
             record,
             score,
-            description: formatKDE(record)
+            description: formatKDE(record),
+            isPerfect
         };
     }));
 

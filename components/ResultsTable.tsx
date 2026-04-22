@@ -3,7 +3,6 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { SeafoodResultItem } from '../types';
 import RatingBadge from './RatingBadge';
 import ColumnToggler from './ColumnToggler';
-import { History, User, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface ResultsTableProps {
   results: any[];
@@ -110,17 +109,31 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
   }, [results, sortConfig]);
 
   const filteredAndSortedResults = useMemo(() => {
+    let items = sortedResults;
+    
+    // Default sort by Species Common Name if no sort config
+    if (!sortConfig) {
+      const commonNameHeader = columnMapping['Common name'];
+      if (commonNameHeader && commonNameHeader !== 'N/A') {
+        items = [...sortedResults].sort((a, b) => {
+          const aVal = String(a[commonNameHeader] || '');
+          const bVal = String(b[commonNameHeader] || '');
+          return aVal.localeCompare(bVal, undefined, { numeric: true, sensitivity: 'base' });
+        });
+      }
+    }
+
     if (!searchTerm) {
-      return sortedResults;
+      return items;
     }
     const lowercasedFilter = searchTerm.toLowerCase();
-    return sortedResults.filter(item => {
+    return items.filter(item => {
        const { _originalIndex, isUpdating, ...searchableItem } = item;
       return Object.values(searchableItem).some(value =>
         String(value).toLowerCase().includes(lowercasedFilter)
       );
     });
-  }, [sortedResults, searchTerm]);
+  }, [sortedResults, searchTerm, sortConfig, columnMapping]);
 
   // Reset to page 1 when search term or sort changes
   useEffect(() => {
@@ -188,8 +201,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
           setEditValue('');
       } else {
           setExpandedRowId(rowId);
-          // Don't pre-fill with "N/A" to save user from deleting it
-          setEditValue(currentId === 'N/A' ? '' : currentId);
+          setEditValue(currentId);
       }
   };
 
@@ -200,9 +212,10 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
       }
   };
 
-  const handleSaveAssignment = async (rowId: string) => {
-      if (onSaveAssignment && editValue) {
-          await onSaveAssignment(rowId, editValue);
+  const handleSaveAssignment = async (rowId: string, currentUniqueId: string) => {
+      if (onSaveAssignment) {
+          const finalId = editValue || currentUniqueId;
+          await onSaveAssignment(rowId, finalId);
           setExpandedRowId(null); // Close the row after saving
       }
   };
@@ -415,7 +428,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <div className="flex-grow">
           <h2 id="results-heading" className="text-2xl font-bold text-gray-800">Analysis Results</h2>
-          <p className="text-sm text-gray-500 mt-1">Tip: Click a Unique ID to expand the row and compare details.</p>
           {filterTitle && (
             <div className="flex items-center gap-3 mt-2">
                 <p className="text-sm text-gray-600">
@@ -646,47 +658,36 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
                                                     </div>
                                                 </div>
 
-                                                {/* Audit Trail Section */}
-                                                <div className="col-span-12 border-t border-gray-100 bg-gray-50/20 py-4 px-6">
-                                                    <div className="flex items-center gap-2 mb-4">
-                                                        <History className="w-4 h-4 text-gray-400" />
-                                                        <h5 className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Data Lineage & Audit Trail</h5>
-                                                    </div>
-                                                    <div className="space-y-3">
-                                                        {item.auditTrail && item.auditTrail.length > 0 ? (
-                                                            item.auditTrail.map((entry: any, i: number) => (
-                                                                <div key={i} className="flex gap-3 items-start relative">
-                                                                    {i !== item.auditTrail.length - 1 && (
-                                                                        <div className="absolute left-[7px] top-4 bottom-0 w-px bg-gray-200"></div>
+                                                {item.candidates && item.candidates.length > 0 && (
+                                                    <div className="col-span-12 border-t border-gray-100 bg-gray-50/20 py-4 px-6">
+                                                        <h5 className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-3">Alternative Matches Found</h5>
+                                                        <div className="grid grid-cols-1 gap-2">
+                                                            {item.candidates.map((cand: any, i: number) => (
+                                                                <div key={i} className={`flex items-center justify-between p-2 bg-white border rounded transition-colors group ${cand.uniqueId === item.uniqueId ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}>
+                                                                    <div className="flex flex-col">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="text-xs font-bold text-gray-700">{cand.uniqueId}</span>
+                                                                            <RatingBadge rating={cand.rating} />
+                                                                            {cand.uniqueId === item.uniqueId && <span className="text-[10px] font-bold text-blue-600 uppercase tracking-tighter">(Current)</span>}
+                                                                        </div>
+                                                                        <div className="text-[10px] text-gray-500 truncate max-w-2xl">{cand.notes}</div>
+                                                                    </div>
+                                                                    {cand.uniqueId !== item.uniqueId && (
+                                                                        <button 
+                                                                            onClick={() => {
+                                                                                setEditValue(cand.uniqueId);
+                                                                                onUpdateResult(item.rowId, cand.uniqueId);
+                                                                            }}
+                                                                            className="text-[10px] font-bold text-blue-600 hover:text-blue-800 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-50 px-2 py-1 rounded border border-blue-200"
+                                                                        >
+                                                                            Select This Rating
+                                                                        </button>
                                                                     )}
-                                                                    <div className={`mt-1 w-3.5 h-3.5 rounded-full flex items-center justify-center z-10 ${
-                                                                        entry.action === 'Initial Analysis' ? 'bg-blue-100 text-blue-600' :
-                                                                        entry.action === 'Approval' ? 'bg-green-100 text-green-600' :
-                                                                        'bg-orange-100 text-orange-600'
-                                                                    }`}>
-                                                                        {entry.action === 'Approval' ? <CheckCircle2 className="w-2 h-2" /> : 
-                                                                         entry.action === 'Manual Correction' ? <AlertCircle className="w-2 h-2" /> :
-                                                                         <Clock className="w-2 h-2" />}
-                                                                    </div>
-                                                                    <div className="flex-1 min-w-0">
-                                                                        <div className="flex items-center gap-2 mb-0.5">
-                                                                            <span className="text-[11px] font-bold text-gray-700">{entry.action}</span>
-                                                                            <span className="text-[10px] text-gray-400">•</span>
-                                                                            <span className="text-[10px] text-gray-400">{new Date(entry.timestamp).toLocaleString()}</span>
-                                                                        </div>
-                                                                        <p className="text-[11px] text-gray-600 leading-relaxed">{entry.details}</p>
-                                                                        <div className="flex items-center gap-1.5 mt-1">
-                                                                            <User className="w-2.5 h-2.5 text-gray-400" />
-                                                                            <span className="text-[10px] font-medium text-gray-500">{entry.user}</span>
-                                                                        </div>
-                                                                    </div>
                                                                 </div>
-                                                            ))
-                                                        ) : (
-                                                            <div className="text-[11px] text-gray-400 italic">No audit history available for this record.</div>
-                                                        )}
+                                                            ))}
+                                                        </div>
                                                     </div>
-                                                </div>
+                                                )}
 
                                                 <div className="col-span-12 grid grid-cols-1 md:grid-cols-12 py-4 px-6 bg-blue-50/30 items-center">
                                                     <div className="md:col-span-2 font-medium text-gray-600 text-xs uppercase md:text-sm md:normal-case mb-1 md:mb-0">Result</div>
@@ -712,25 +713,35 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
                                                     <label htmlFor={`edit-id-${index}`} className="block text-xs font-bold text-gray-700 mb-1">
                                                         Is this match incorrect? Manually update the Unique ID:
                                                     </label>
-                                                    <div className="flex gap-2 max-w-md">
+                                                    <div className="flex flex-wrap items-center gap-2">
                                                         <input 
                                                             id={`edit-id-${index}`}
                                                             type="text" 
                                                             value={editValue} 
                                                             onChange={(e) => setEditValue(e.target.value)}
-                                                            className="flex-grow text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm"
+                                                            className="flex-grow min-w-[200px] text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm"
                                                             placeholder="Enter official ID or 'Cert'..."
                                                         />
                                                         <button 
                                                             onClick={() => handleSubmitEdit(item.rowId)}
-                                                            className="bg-blue-600 text-white text-xs px-4 py-1.5 rounded font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                                                            className="bg-blue-600 text-white text-xs px-4 py-1.5 rounded font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm whitespace-nowrap"
                                                             disabled={!editValue || (editValue === item.uniqueId && !item.isManual) || item.isUpdating}
                                                         >
                                                             Update ID
                                                         </button>
                                                         <button 
-                                                            onClick={() => handleSaveAssignment(item.rowId)}
-                                                            className="bg-green-600 text-white text-xs px-4 py-1.5 rounded font-semibold hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-green-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm flex items-center gap-1.5"
+                                                            onClick={() => {
+                                                                setEditValue('N/A');
+                                                                onUpdateResult(item.rowId, 'N/A');
+                                                            }}
+                                                            className="bg-gray-500 text-white text-xs px-4 py-1.5 rounded font-semibold hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm whitespace-nowrap"
+                                                            disabled={item.uniqueId === 'N/A' || item.isUpdating}
+                                                        >
+                                                            Remove Match
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => handleSaveAssignment(item.rowId, item.uniqueId)}
+                                                            className="bg-green-600 text-white text-xs px-4 py-1.5 rounded font-semibold hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm flex items-center gap-1.5 whitespace-nowrap"
                                                             disabled={item.isUpdating || item.isVerified}
                                                         >
                                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -739,9 +750,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({
                                                             {item.isVerified ? 'Assignment Saved' : 'Save Assignment'}
                                                         </button>
                                                     </div>
-                                                </div>
-                                                <div className="text-xs text-gray-500 italic max-w-xs">
-                                                    Tip: Updating the ID will force the system to use the official details associated with that ID.
                                                 </div>
                                             </div>
                                         </div>

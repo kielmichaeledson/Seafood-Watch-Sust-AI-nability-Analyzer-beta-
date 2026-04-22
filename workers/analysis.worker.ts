@@ -7,7 +7,7 @@ self.onmessage = async (e) => {
   if (type === 'PARSE_FILE') {
     try {
       const { data, options } = payload;
-      const workbook = XLSX.read(data, options);
+      const workbook = XLSX.read(new Uint8Array(data as ArrayBuffer), options);
       const sheetNames = workbook.SheetNames;
       
       self.postMessage({ 
@@ -23,12 +23,22 @@ self.onmessage = async (e) => {
 
   if (type === 'GET_SHEET_DATA') {
     try {
-      const { data, options, sheetName, headerRowIndex, limit } = payload;
-      const workbook = XLSX.read(data, options);
-      const worksheet = workbook.Sheets[sheetName];
+      const { data, options, sheetName, limit } = payload;
+      // SheetJS can auto-detect the format from a Uint8Array
+      const workbook = XLSX.read(new Uint8Array(data as ArrayBuffer), options);
+      
+      if (!workbook || !workbook.SheetNames || workbook.SheetNames.length === 0) {
+        throw new Error("Could not parse workbook or no sheets found.");
+      }
+
+      // For CSV/single-sheet files, if the requested sheet isn't found, try the first one
+      let worksheet = workbook.Sheets[sheetName];
+      if (!worksheet && workbook.SheetNames.length > 0) {
+        worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      }
       
       if (!worksheet) {
-        throw new Error(`Sheet "${sheetName}" not found.`);
+        throw new Error(`Sheet "${sheetName}" not found in workbook.`);
       }
 
       const dataAsArray: any[][] = XLSX.utils.sheet_to_json(worksheet, { 
@@ -43,7 +53,7 @@ self.onmessage = async (e) => {
         type: 'GET_SHEET_DATA_SUCCESS', 
         payload: { 
           dataAsArray: resultData,
-          sheetName
+          sheetName: workbook.Sheets[sheetName] ? sheetName : workbook.SheetNames[0]
         } 
       });
     } catch (error: any) {
@@ -55,31 +65,51 @@ self.onmessage = async (e) => {
     try {
       const { dataAsArray, headerRowIndex } = payload;
       
-      if (dataAsArray.length < headerRowIndex) {
-          throw new Error(`Header row ${headerRowIndex} not found.`);
+      if (!dataAsArray || dataAsArray.length === 0) {
+        throw new Error("Internal error: No data received for transformation.");
       }
 
-      const rawHeaders: string[] = dataAsArray[headerRowIndex - 1].map((header: any) => String(header).trim());
+      if (dataAsArray.length < headerRowIndex) {
+          throw new Error(`The spreadsheet has only ${dataAsArray.length} rows, but header row ${headerRowIndex} was selected.`);
+      }
+
+      const headerRow = dataAsArray[headerRowIndex - 1];
+      if (!headerRow || !Array.isArray(headerRow)) {
+        throw new Error("Invalid header row structure.");
+      }
+
+      const rawHeaders: string[] = headerRow.map((header: any) => String(header || '').trim());
       const headers: string[] = [];
       const counts: Record<string, number> = {};
 
       for (const header of rawHeaders) {
-          if (!header) { headers.push(''); continue; }
-          counts[header] = (counts[header] || 0) + 1;
-          headers.push(counts[header] > 1 ? `${header} (${counts[header]})` : header);
+          // Fallback for empty headers to ensure we can still access the data by index if needed
+          const entry = header || `Column ${headers.length + 1}`;
+          counts[entry] = (counts[entry] || 0) + 1;
+          headers.push(counts[entry] > 1 ? `${entry} (${counts[entry]})` : entry);
       }
 
       const jsonData = dataAsArray.slice(headerRowIndex).map((row: any[]) => {
           const rowObject: any = {};
           headers.forEach((header, index) => {
-              if(header) rowObject[header] = row[index];
+              if (header) {
+                const val = row[index];
+                rowObject[header] = val !== undefined && val !== null ? val : '';
+              }
           });
           return rowObject;
-      }).filter((obj: any) => Object.keys(obj).length > 0);
+      }).filter((obj: any) => {
+        // Only keep rows that have at least one non-empty value
+        return Object.values(obj).some(v => String(v).trim() !== '');
+      });
+
+      if (headers.length === 0) {
+        throw new Error("No headers identified in the selected row.");
+      }
 
       self.postMessage({ 
         type: 'TRANSFORM_DATA_SUCCESS', 
-        payload: { jsonData, headers: headers.filter(h => h) } 
+        payload: { jsonData, headers } 
       });
     } catch (error: any) {
       self.postMessage({ type: 'ERROR', payload: error.message });
