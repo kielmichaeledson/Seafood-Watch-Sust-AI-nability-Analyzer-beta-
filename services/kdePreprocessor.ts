@@ -16,20 +16,18 @@ export interface KDERow {
   [key: string]: any; 
 }
 
-export type SchemaType = 'Standard' | 'A_Compact' | 'B_ProductSource' | 'C_Disney' | 'D_Nestle';
+export type SchemaType = 'Standard' | 'A_Compact' | 'B_ProductSource' | 'C_Disney' | 'D_Nestle' | 'E_Messy';
 
 export function detectSchema(headers: string[], firstRows: any[][]): SchemaType {
     const headStr = headers.join('|').toLowerCase();
 
-    // Schema D - Nestle Purina (Detection: Blank line + Nestle/Purina title)
-    // Actually, detectSchema is usually called AFTER initial parsing. 
-    // In our app, we map columns. But the user specifically asked for a schema detection layer.
+    // Schema D - Nestle Purina
     if (firstRows.length > 2 && String(firstRows[0][0] || '').includes('Purina')) return 'D_Nestle';
     
     // Schema B - Product Source (Full text)
     if (headers.some(h => h.toLowerCase() === 'product source') && headers.length < 5) return 'B_ProductSource';
 
-    // Schema A - California Fish Grill (Species, Method, Location)
+    // Schema A - California Fish Grill
     if (headers.length >= 3 && 
         headers.some(h => h.toLowerCase() === 'species') && 
         headers.some(h => h.toLowerCase().includes('catch / farm method')) &&
@@ -37,8 +35,14 @@ export function detectSchema(headers: string[], firstRows: any[][]): SchemaType 
         return 'A_Compact';
     }
 
-    // Schema C - Disney
+    // Schema C - Disney (Fishery/Farm name as primary concatenation)
     if (headers.some(h => h.toLowerCase().includes('fishery/farm name'))) return 'C_Disney';
+
+    // Generic Messy Detection: Check if any column in first 5 rows has lots of brackets or pipes
+    const hasMessyRows = firstRows.slice(0, 5).some(row => 
+        row.some(cell => typeof cell === 'string' && (cell.includes('[') || cell.includes('|') || (cell.includes('-') && cell.split('-').length > 3)))
+    );
+    if (hasMessyRows) return 'E_Messy';
 
     return 'Standard';
 }
@@ -66,9 +70,18 @@ export function normalizeRow(row: any, schema: SchemaType, columnMapping: Record
         kde.dataQualityWarnings.push('schema_compact');
     } else if (schema === 'C_Disney') {
         const fisheryName = String(row['Fishery/Farm name'] || '');
-        kde = { ...kde, ...parseDisneyFisheryName(fisheryName) };
-        // Merge with standard mappings if standard columns exist as fallback/augment
+        kde = { ...kde, ...parseMessyString(fisheryName) };
         if (!kde.speciesCommonName) kde.speciesCommonName = String(row[columnMapping['Common name']] || '');
+    } else if (schema === 'E_Messy') {
+        // Try all columns to see if one is messy
+        const messyCol = Object.values(row).find(v => typeof v === 'string' && (v.includes('[') || v.includes('|'))) as string;
+        if (messyCol) {
+            kde = { ...kde, ...parseMessyString(messyCol) };
+        }
+        // Fill gaps with standard mapping
+        if (!kde.speciesCommonName) kde.speciesCommonName = String(row[columnMapping['Common name']] || '');
+        if (!kde.country) kde.country = String(row[columnMapping['Source country']] || '');
+        if (!kde.method) kde.method = String(row[columnMapping['Production Method']] || '');
     } else {
         // Standard Mapping
         kde.speciesCommonName = String(row[columnMapping['Common name']] || '');
@@ -79,6 +92,15 @@ export function normalizeRow(row: any, schema: SchemaType, columnMapping: Record
         kde.method = String(row[columnMapping['Production Method']] || '');
         kde.farmedWild = String(row[columnMapping['Wild or Farmed']] || '');
         kde.certificationInline = String(row[columnMapping['Certification']] || '');
+    }
+
+    // Secondary check: If speciesCommonName still looks concatenated, split it
+    if (kde.speciesCommonName && (kde.speciesCommonName.includes('|') || kde.speciesCommonName.includes('['))) {
+        const messy = parseMessyString(kde.speciesCommonName);
+        kde.speciesCommonName = messy.speciesCommonName || kde.speciesCommonName;
+        kde.country = kde.country || messy.country;
+        kde.method = kde.method || messy.method;
+        kde.certificationInline = kde.certificationInline || messy.certificationInline;
     }
 
     return cleanAndRepairKDERow(kde);
@@ -128,33 +150,49 @@ function parseCompactSchema(species: string, method: string, location: string): 
     };
 }
 
-function parseDisneyFisheryName(fisheryName: string): Partial<KDERow> {
-    if (!fisheryName) return {};
-    const s = fisheryName.trim();
+function parseMessyString(text: string): Partial<KDERow> {
+    if (!text) return {};
+    const s = text.trim();
   
+    // 1. Bracket Strategy: [Species][Country][Loc][Gear][Cert]
     if (s.includes('[')) {
       const tokens = s.match(/\[([^\]]+)\]/g)?.map(t => t.slice(1, -1)) ?? [];
       const subdivision = s.match(/Subdivision:\s*(.+)$/)?.[1]?.trim();
       const certToken = tokens.find(t => /MSC|ASC|BAP|GGAP|GlobalG\.A\.P\./i.test(t));
       const nonCertTokens = tokens.filter(t => t !== certToken);
+      
+      // Heuristic: First token might be supplier or species
+      let species = nonCertTokens[0];
+      let country = nonCertTokens[1];
+      // If first token is long or has common company suffixes, it's likely a supplier
+      if (species && (species.toLowerCase().includes('inc') || species.toLowerCase().includes('corp') || species.toLowerCase().includes('co.'))) {
+          species = nonCertTokens[1];
+          country = nonCertTokens[2];
+      }
+
       return {
-        speciesCommonName: nonCertTokens[0],
-        country: nonCertTokens[1],
-        subnational: subdivision ?? nonCertTokens[2],
-        method: nonCertTokens.find(t => /pen|trawl|line|pot|trap|aquaculture|culture/i.test(t)),
+        speciesCommonName: species,
+        country: country,
+        subnational: subdivision ?? (nonCertTokens.length > 2 ? nonCertTokens[2] : undefined),
+        method: tokens.find(t => /pen|trawl|line|pot|trap|aquaculture|culture|cage|pond|tank/i.test(t.toLowerCase())),
         certificationInline: certToken,
       };
     }
   
+    // 2. Pipe Strategy: Species | Location | Country | Method [Cert]
     if (s.includes('|')) {
       const parts = s.split('|').map(p => p.trim());
       const firstPart = parts[0].split(' - ');
       const species = firstPart[0]?.trim();
       const stockUnit = firstPart.slice(1).join(' - ').trim();
+      
       const certMatch = s.match(/\[([A-Z]+):\s*([^\]]+)\]/);
       const certInline = certMatch?.[1]; 
+      
       const methodPart = parts[parts.length - 1].replace(/\[[^\]]+\]/g, '').trim();
-      const countryPart = parts[parts.length - 2]?.trim();
+      // Try to find a country in the last few parts
+      const countryPart = parts.find(p => /^[A-Z][a-z]+(\s[A-Z][a-z]+)*$/.test(p)) || parts[parts.length - 2];
+      
       return {
         speciesCommonName: species,
         stockUnit,
@@ -164,18 +202,27 @@ function parseDisneyFisheryName(fisheryName: string): Partial<KDERow> {
       };
     }
   
+    // 3. Dash/Space Strategy: Species-Country-Method
     const dashParts = s.split('-').map(p => p.trim()).filter(Boolean);
-    const countryRaw = dashParts[1];
-    const multiOrigin = countryRaw?.includes('/') || countryRaw?.includes(',')
-      ? countryRaw.split(/[\/,]/).map(c => c.trim())
-      : undefined;
-    return {
-      speciesCommonName: dashParts[0],
-      country: multiOrigin ? undefined : countryRaw,
-      multiOriginCountries: multiOrigin,
-      method: dashParts[2] || undefined,
-      certificationInline: dashParts[3] || undefined,
-    };
+    if (dashParts.length >= 3) {
+        const countryRaw = dashParts[1];
+        const multiOrigin = countryRaw?.includes('/') || countryRaw?.includes(',')
+          ? countryRaw.split(/[\/,]/).map(c => c.trim())
+          : undefined;
+        return {
+          speciesCommonName: dashParts[0],
+          country: multiOrigin ? undefined : countryRaw,
+          multiOriginCountries: multiOrigin,
+          method: dashParts[2] || undefined,
+          certificationInline: dashParts[3] || undefined,
+        };
+    }
+
+    return { speciesCommonName: s };
+}
+
+function parseDisneyFisheryName(fisheryName: string): Partial<KDERow> {
+    return parseMessyString(fisheryName);
 }
 
 export function cleanAndRepairKDERow(kde: KDERow): KDERow {

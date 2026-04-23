@@ -73,6 +73,7 @@ Geographic Hierarchies:
 
 Species-Method Probabilities:
 - Be critical of biologically implausible matches! For example, oysters are almost never trawled; they are farmed on beds or hand-gathered. If a candidate uses a method that is extremely unlikely for the species (e.g., trawling for bivalves), penalize it in your reliability score.
+- AMBIGUITY: If the user provides a broad name (e.g. 'Cod') and there are multiple specific candidates (Atlantic Cod, Pacific Cod), the best match is usually the one that aligns with the Country or Method. If none align specifically, choose the most generic candidate or 'N/A' if confidence is too low.
 
 Evidence Snippets:
 - For every match, you MUST provide an 'evidence' snippet. This is a direct quote or a specific 1-sentence derivation from the database candidate's description that confirms why the geography and method align with the user input.
@@ -647,8 +648,11 @@ async function preNormalizeKDEs(
     3. FAO AREAS:
        - If you see a number like '27', '67', '71', or 'Area 27', 'FAO 27', convert it to the full region name provided in the Countries list (e.g., 'Northeast Atlantic').
     4. SPECIES NAMES:
-       - Remove marketing fluff (e.g., 'Fresh frozen', 'Premium', 'Filet'). 
+       - Remove marketing fluff (e.g., 'Fresh frozen', 'Premium', 'Filet', '10 oz', 'SKU-123'). 
        - Standardize names (e.g., 'Chilean Bass' -> 'Patagonian toothfish').
+       - If a string is concatenated (e.g. 'Salmon | Norway | Longlines'), extract ONLY the species name.
+       - If a string has brackets (e.g. '[Salmon][Chile]'), extract ONLY the species name.
+       - AMBIGUOUS TERMS: If an input is broad (e.g. 'Cod', 'Shrimp', 'Tuna') and NOT a specific canonical species, return the broad term as-is. Do NOT guess the specific species yet.
     5. METHODS:
        - Map specific gear to the broad families in the Methods list (e.g., 'Traps' -> 'Pots').
        

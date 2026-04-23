@@ -2,6 +2,8 @@
 import { Rating } from '../types';
 import fuzzysort from 'fuzzysort';
 import MiniSearch from 'minisearch';
+import speciesData from '../data/species.json';
+import geographyData from '../data/geography.json';
 
 export interface SeafoodRecord {
   UniqueID: string;
@@ -208,16 +210,29 @@ export interface Candidate {
 
 export function getCanonicalTerms(): { species: string[]; countries: string[]; methods: string[] } {
   initializeDatabase();
+  
   const species = new Set<string>();
-  const countries = new Set<string>();
+  const countries = new Set<string>(geographyData.countries);
   const methods = new Set<string>();
 
+  // Add BOW names to the geography set
+  geographyData.bows.forEach(b => {
+      if (b.name) countries.add(b.name);
+      if (b.fao) countries.add(b.fao);
+  });
+
+  // Add species from authoritative lookup
+  speciesData.forEach(s => {
+      if (s.common) species.add(s.common);
+      if (s.scientific) species.add(s.scientific);
+  });
+
+  // Augment with database records for methods and any missing location data
   databaseArray.forEach(record => {
     if (record.CommonName) species.add(record.CommonName);
     if (record.ScientificName) species.add(record.ScientificName);
     if (record.EconomicZone) countries.add(record.EconomicZone);
     if (record.Methods) {
-        // Methods can sometimes be comma separated in other datasets, but here we split by typical separators if any
         record.Methods.split(/[;,]/).forEach(m => {
             const trimmed = m.trim();
             if (trimmed && trimmed.length > 2) methods.add(trimmed);
@@ -342,12 +357,35 @@ export async function findCandidates(
                 'msc': 'marine stewardship council certified',
                 'asc': 'aquaculture stewardship council certified',
                 'bap': 'best aquaculture practices (bap) certified',
+                'bap 1 star': 'best aquaculture practices (bap) certified',
+                'bap 2 star': 'best aquaculture practices (bap) certified',
+                'bap 3 star': 'best aquaculture practices (bap) certified',
+                'bap 4 star': 'best aquaculture practices (bap) certified',
                 'naturland': 'naturland certified',
-                'fos': 'friend of the sea certified'
+                'fos': 'friend of the sea certified',
+                'ggap': 'global g.a.p. certified',
+                'global gap': 'global g.a.p. certified',
+                'globalgap': 'global g.a.p. certified'
             };
             const normalizedInputCert = certMap[lCertOrg] || lCertOrg;
             if (recCert.includes(normalizedInputCert) || normalizedInputCert.includes(recCert)) {
                 score += 50;
+            }
+        }
+
+        // 5. 2025 Format Support: Bracket Parsing
+        // If the species name contains brackets (e.g. "Pacifico Aquaculture[Striped bass]"),
+        // we should try to extract the species inside brackets.
+        if (species.includes('[')) {
+            const matches = species.match(/\[(.*?)\]/g);
+            if (matches) {
+                matches.forEach(m => {
+                    const extracted = m.slice(1, -1).toLowerCase();
+                    if (record.CommonName.toLowerCase().includes(extracted) || 
+                        record.ScientificName.toLowerCase().includes(extracted)) {
+                        score += 30;
+                    }
+                });
             }
         }
 

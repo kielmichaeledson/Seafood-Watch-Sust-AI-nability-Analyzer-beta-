@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { getSemanticCache, saveSemanticCache } from "./dbService";
+import speciesData from '../data/species.json';
 
 declare var process: {
   env: {
@@ -17,18 +18,21 @@ export const SPECIES_SYNONYM_MAP: Record<string, string> = {
     'branzini': 'european seabass',
     'loup de mer': 'european seabass',
     'european sea bass': 'european seabass',
+    'mediterranean sea bass': 'european seabass',
     
     // Sablefish (PCC: 'black cod or sablefish')
     'black cod': 'sablefish',
     'butterfish': 'sablefish',
     'alaska black cod': 'sablefish',
     'black cod or sablefish': 'sablefish',
+    'gindara': 'sablefish',
     
     // Mahi / Dolphinfish
     'mahi': 'dolphinfish',
     'mahi mahi': 'dolphinfish',
     'mahi-mahi': 'dolphinfish',
     'dorado': 'dolphinfish',
+    'common dolphinfish': 'dolphinfish',
     
     // Wahoo (PCC: 'ono or wahoo')
     'ono': 'wahoo',
@@ -38,6 +42,7 @@ export const SPECIES_SYNONYM_MAP: Record<string, string> = {
     'ling cod': 'lingcod',
     'rock fish': 'rockfish',
     'rock cod': 'rockfish',
+    'vermilion rockfish': 'rockfish',
     
     // Pollock (MOMs: 'Alaskan Pollock')
     'alaskan pollock': 'alaska pollock',
@@ -82,23 +87,28 @@ export const SPECIES_SYNONYM_MAP: Record<string, string> = {
     // Shrimp (PCC: 'Blue Shrimp' = Litopenaeus stylirostris, distinct from whiteleg)
     'blue shrimp': 'blue shrimp',
     'white shrimp': 'whiteleg shrimp',
+    'whiteleg shrimp': 'whiteleg shrimp',
     'vannamei': 'whiteleg shrimp',
     'spot shrimp': 'sidestriped shrimp',
     'spot prawns': 'sidestriped shrimp',
     'prawns': 'whiteleg shrimp',
     'pink shrimp': 'pink shrimp',
     'shrimp meat': 'whiteleg shrimp',
+    'argentine red shrimp': 'argentine red shrimp',
+    'giant tiger prawn': 'giant tiger prawn',
     
     // Crab (PCC: 'dungeness crab meat')
     'dungeness': 'dungeness crab',
     'dungeness crab meat': 'dungeness crab',
     'snow crab': 'snow/queen crab',
+    'queen crab': 'snow/queen crab',
     'opilio crab': 'snow/queen crab',
     'golden king crab': 'golden king crab',
     'red king crab': 'red king crab',
     'soft shell crab': 'blue crab',
     'soft shells': 'blue crab',
     'jonah crab': 'jonah crab',
+    'blue swimming crab': 'blue swimming crab',
     
     // Lobster (PCC: 'lobster tails', 'Spiny Lobster (Caribbean)')
     'lobster tails': 'american lobster',
@@ -109,6 +119,7 @@ export const SPECIES_SYNONYM_MAP: Record<string, string> = {
     'scampi': 'norway lobster',
     'langoustine': 'norway lobster',
     'langostino': 'squat lobster',
+    'lobsterette': 'norway lobster',
     
     // Squid (CA Fish Grill: 'CALAMARI STRIPS'; Pacific Catch: 'California Market Squid', 'Longfin Squid', 'Northern Shortfin Squid')
     'calamari': 'longfin inshore squid',
@@ -125,51 +136,86 @@ export const SPECIES_SYNONYM_MAP: Record<string, string> = {
     'quahog': 'northern quahog',
     'cockle': 'common cockle',
     'new zealand cockles': 'common cockle',
+    'hard clams nei': 'meretrix clams',
+    'manila clam': 'manila clam',
     
     // Scallops
     'sea scallops': 'sea scallop',
+    'american sea scallop': 'sea scallop',
     'diver scallop': 'sea scallop',
     'queen scallops': 'queen scallop',
+    'yesso scallop': 'yesso scallop',
+    'pacific calico scallop': 'calico scallop',
     
     // Oysters / mussels (PCC: 'oysters', 'mussels' generic)
     'pacific oysters': 'pacific oyster',
     'east coast oyster': 'eastern oyster',
     'oysters': 'eastern oyster',
+    'american cupped oyster': 'eastern oyster',
     'mussels': 'northern blue mussel',
+    'blue mussel': 'northern blue mussel',
+    'new zealand mussel': 'green-lipped mussel',
+    'green lip musselss': 'green-lipped mussel',
+    'chilean mussel': 'chilean mussel',
+    'mediterranean mussels': 'mediterranean mussel',
     
     // Flatfish
     'halibut': 'atlantic halibut',
+    'pacific halibut': 'pacific halibut',
     'petrale sole': 'petrale sole',
     'dover sole': 'dover sole',
     'grey sole': 'witch flounder',
     'lemon sole': 'winter flounder',
     'fluke': 'summer flounder',
+    'european plaice': 'european plaice',
     
     // Tuna (CA Fish Grill: 'TUNA 7-9 OZ'; PCC: 'ahi tuna', 'albacore tuna')
     'ahi': 'yellowfin tuna',
     'ahi tuna': 'yellowfin tuna',
     'albacore tuna': 'albacore',
     'albacore': 'albacore',
+    'bluefin tuna': 'atlantic bluefin tuna',
     
     // Other
     'swai': 'pangasius',
     'basa': 'pangasius',
     'tra': 'pangasius',
+    'pangas catfishes nei': 'pangasius',
     'tilapia': 'tilapia',
     'nile tilapia': 'tilapia',
     'barramundi': 'barramundi',
+    'barramundi perch': 'barramundi',
     'almaco jack': 'almaco jack',
     'cobia': 'cobia',
     'striped bass': 'striped bass',
+    'sunshine bass': 'striped bass',
     'surimi': 'alaska pollock',
     'imitation crab': 'alaska pollock',
     'chilean sea bass': 'patagonian toothfish',
     'monkfish': 'goosefish',
+    'american angler': 'goosefish',
     'tilefish': 'golden tilefish',
+    'great northern tilefish': 'golden tilefish',
     'swordfish': 'swordfish',
     'spiny dogfish': 'spiny dogfish',
     'mako shark': 'shortfin mako shark',
     'black sea bass': 'black sea bass',
+    'paralichthys dentatus': 'summer flounder',
+    'red drum': 'red drum',
+    'northern red snapper': 'red snapper',
+    'red snapper': 'red snapper',
+    'yellowtail amberjack': 'yellowtail',
+    'japanese amberjack': 'yellowtail',
+    'arctic char': 'arctic char',
+    'white sturgeon': 'white sturgeon',
+    'russian sturgeon': 'russian sturgeon',
+    'danube sturgeon': 'russian sturgeon',
+    'siberian sturgeon': 'siberian sturgeon',
+    'sterlet sturgeon': 'sterlet sturgeon',
+    'red swamp crawfish': 'red swamp crawfish',
+    'crawfish': 'red swamp crawfish',
+    'common octopus': 'common octopus',
+    'red sea urchin': 'red sea urchin',
 };
 
 export const SCIENTIFIC_TO_COMMON: Record<string, string> = {
@@ -204,6 +250,7 @@ export const SCIENTIFIC_TO_COMMON: Record<string, string> = {
     'squalus acanthias': 'spiny dogfish',
     'litopenaeus setiferus': 'white shrimp',
     'litopenaeus vannamei': 'whiteleg shrimp',
+    'whiteleg shrimp': 'whiteleg shrimp',
     'litopenaeus stylirostris': 'blue shrimp',
     'penaeus monodon': 'giant tiger prawn',
     'penaeus aztecus': 'brown shrimp',
@@ -220,7 +267,9 @@ export const SCIENTIFIC_TO_COMMON: Record<string, string> = {
     'chionoecetes opilio': 'snow/queen crab',
     'oreochromis niloticus': 'tilapia',
     'pangasianodon hypophthalmus': 'pangasius',
+    'pangasius spp': 'pangasius',
     'ictalurus punctatus': 'channel catfish',
+    'ictalurus furcatus': 'blue catfish',
     'dicentrarchus labrax': 'european seabass',
     'lates calcarifer': 'barramundi',
     'dissostichus eleginoides': 'patagonian toothfish',
@@ -228,10 +277,13 @@ export const SCIENTIFIC_TO_COMMON: Record<string, string> = {
     'opiodon elongatus': 'lingcod',
     'sebastes': 'rockfish',
     'sebastes spp': 'rockfish',
+    'sebastes miniatus': 'rockfish',
     'pleuronectidae': 'flatfish',
     'lutjanus spp': 'snapper',
     'lutjanus campechanus': 'red snapper',
+    'lutjanus sebae': 'red snapper',
     'mycteroperca microlepis': 'gag',
+    'mycteroperca bonaci': 'black grouper',
     'coryphaena hippurus': 'dolphinfish',
     'acanthocybium solandri': 'wahoo',
     'rachycentron canadum': 'cobia',
@@ -241,14 +293,52 @@ export const SCIENTIFIC_TO_COMMON: Record<string, string> = {
     'paralichthys dentatus': 'summer flounder',
     'mercenaria mercenaria': 'northern quahog',
     'venerupis philippinarum': 'manila clam',
+    'meretrix spp': 'meretrix clams',
+    'meretrix lyrata': 'meretrix clams',
     'argopecten irradians': 'bay scallop',
+    'argopecten ventricosus': 'calico scallop',
     'placopecten magellanicus': 'sea scallop',
+    'mizuhopecten yessoensis': 'yesso scallop',
+    'patinopecten yessoensis': 'yesso scallop',
     'crassostrea virginica': 'eastern oyster',
     'magallana gigas': 'pacific oyster',
     'mytilus edulis': 'northern blue mussel',
+    'mytilus chilensis': 'chilean mussel',
+    'mytilus galloprovincialis': 'mediterranean mussel',
+    'perna canaliculus': 'green-lipped mussel',
     'doryteuthis opalescens': 'opalescent inshore squid',
     'loligo pealeii': 'longfin inshore squid',
+    'doryteuthis (amerigo) pealeii': 'longfin inshore squid',
+    'seriola quinqueradiata': 'yellowtail',
+    'seriola lalandi': 'yellowtail',
+    'seriola rivoliana': 'almaco jack',
+    'sciaenops ocellatus': 'red drum',
+    'procambarus clarkii': 'red swamp crawfish',
+    'acipenser transmontanus': 'white sturgeon',
+    'acipenser gueldenstaedtii': 'russian sturgeon',
+    'aceipenser gueldenstaedtii': 'russian sturgeon',
+    'acipenser baerii': 'siberian sturgeon',
+    'acipenser ruthenus': 'sterlet sturgeon',
+    'octopus vulgaris': 'common octopus',
+    'mesocentrotus franciscanus': 'red sea urchin',
+    'strongylocentrotus franciscanus': 'red sea urchin',
+    'hyperoglyphe antarctica': 'bluenose warehou',
+    'pangasiidae': 'pangasius',
+    'pleoticus muelleri': 'argentine red shrimp',
 };
+
+// Auto-populate from speciesData for missing scientific names
+speciesData.forEach(s => {
+    if (s.scientific && s.common) {
+        // Handle comma-separated scientific names (e.g. for Clams)
+        const scientificNames = s.scientific.split(',').map(name => name.trim().toLowerCase());
+        scientificNames.forEach(scientific => {
+            if (scientific && !SCIENTIFIC_TO_COMMON[scientific]) {
+                SCIENTIFIC_TO_COMMON[scientific] = s.common.toLowerCase();
+            }
+        });
+    }
+});
 
 export const COUNTRY_NORMALIZATION_MAP: Record<string, string> = {
     'united states of america (the)': 'United States',
@@ -264,14 +354,18 @@ export const COUNTRY_NORMALIZATION_MAP: Record<string, string> = {
 
 export const GEAR_FAMILY_MEMBERS: Record<string, string[]> = {
     'ponds': ['ponds','pond','semi-intensive ponds','intensive ponds','extensive ponds',
-              'pond, frequent exchange','fully extensive','earthen ponds','silvocuture','silviculture'],
+              'pond, frequent exchange','fully extensive','earthen ponds','silvocuture','silviculture','intensive pond'],
     'net pens': ['net pens','pens','marine net pens','ocean pen','cages net pens',
-                 'freshwater net pens','sea cages','offshore cages','submersible net pen','open net pen','cage - floating','cage - fixed'],
+                 'freshwater net pens','sea cages','offshore cages','submersible net pen','open net pen',
+                 'cage - floating','cage - fixed','marine net pen','cages_net_pens'],
     'tanks': ['tanks','recirculating tanks','indoor recirculating tanks',
               'outdoor recirculating tanks','raceways','raceway','outdoor flowthrough raceways',
-              'indoor flowthrough raceway','flow-through tanks','contained'],
+              'indoor flowthrough raceway','flow-through tanks','contained','tanks - flow-through',
+              'tanks - recirculatory system (ras)','recirculatory system (ras)','raceway - flow-through',
+              'indoor recirculating tanks (with wastewater treatment)','outdoor recirculating tanks (with wastewater treatment)'],
     'bottom culture': ['bottom culture','on-bottom culture','off-bottom culture',
-                       'off-bottom cultured','raft culture','longline culture','bag culture','suspended culture','on bottom','rope grown'],
+                       'off-bottom cultured','raft culture','longline culture','bag culture','suspended culture','on bottom','rope grown',
+                       'miscellaneous - rope grown','off bottom (bivalves)','off-bottom culture: raft culture'],
     'dredges': ['dredges','towed dredges','mechanized dredges','hand dredges',
                 'hydraulic dredges','dredges (unspecified)'],
     'traps': ['traps','pots','trap/pot','pot/trap','traps (unspecified)','fyke nets','pound nets',

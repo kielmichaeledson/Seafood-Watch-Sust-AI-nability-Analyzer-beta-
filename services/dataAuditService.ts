@@ -77,6 +77,27 @@ export function performDataAudit(
     });
   });
 
+  // 4. Check for Concatenated Fields (Messy Variable detection)
+  const messyFields: string[] = [];
+  Object.values(mapping).forEach(header => {
+      if (!header || header === 'N/A') return;
+      const sampleRows = data.slice(0, 10);
+      const isMessy = sampleRows.filter(row => {
+          const val = String(row[header] || '');
+          return val.includes('[') || val.includes('|') || (val.includes('-') && val.split('-').length > 2);
+      }).length >= 3;
+      
+      if (isMessy) messyFields.push(header);
+  });
+
+  if (messyFields.length > 0) {
+      issues.push({
+          type: 'info',
+          title: 'Concatenated Variables Detected',
+          description: `The columns [${messyFields.join(', ')}] appear to contain bundled information (e.g. species, location, and gear in one string). The app's flexible parser will automatically attempt to split and clean these values for matching.`,
+      });
+  }
+
   if (skippableRows > 0) {
       issues.push({
           type: 'critical',
