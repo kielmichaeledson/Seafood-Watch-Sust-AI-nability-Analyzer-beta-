@@ -15,6 +15,7 @@ export interface SeafoodRecord {
   SubnationalArea: string;
   EconomicZone: string;
   BodyOfWater: string;
+  FAOMajors: string;
   Methods: string;
   RatingColor: string;
   ProductionMethod: string;
@@ -77,6 +78,7 @@ function parseAndPopulate(csvText: string) {
   const subnationalIndex = getIdx('SubnationalArea');
   const economicZoneIndex = getIdx('EconomicZone');
   const bowsIndex = getIdx('BOWs');
+  const faoMajorsIndex = getIdx('FAOMajors');
   const methodsIndex = getIdx('Methods');
   const ratingColorIndex = getIdx('RatingColor');
   const harvestCertIndex = getIdx('HarvestCertification');
@@ -107,6 +109,7 @@ function parseAndPopulate(csvText: string) {
       SubnationalArea: getCol(cols, subnationalIndex),
       EconomicZone: getCol(cols, economicZoneIndex),
       BodyOfWater: getCol(cols, bowsIndex),
+      FAOMajors: getCol(cols, faoMajorsIndex),
       Methods: getCol(cols, methodsIndex),
       RatingColor: ratingColor,
       HarvestCertification: getCol(cols, harvestCertIndex),
@@ -137,7 +140,7 @@ function parseAndPopulate(csvText: string) {
 
   // Build MiniSearch Index
   miniSearch = new MiniSearch({
-    fields: ['CommonName', 'ScientificName', 'FAOCommonName', 'FDACommonName', 'EconomicZone', 'SubnationalArea', 'BodyOfWater', 'Methods', 'HarvestCertification'],
+    fields: ['CommonName', 'ScientificName', 'FAOCommonName', 'FDACommonName', 'EconomicZone', 'SubnationalArea', 'BodyOfWater', 'FAOMajors', 'Methods', 'HarvestCertification'],
     storeFields: ['UniqueID', 'RecType'],
     idField: 'UniqueID',
     searchOptions: {
@@ -289,24 +292,47 @@ export async function findCandidates(
 
         const recZone = (record.EconomicZone || '').toLowerCase();
         const recSub = (record.SubnationalArea || '').toLowerCase();
+        const recBow = (record.BodyOfWater || '').toLowerCase();
+        const recFao = (record.FAOMajors || '').toLowerCase();
         const recMethod = (record.Methods || '').toLowerCase();
+        
         const lCountry = country.toLowerCase();
+        const lSubnational = subnational.toLowerCase();
         const lMethod = method.toLowerCase();
         const lFarmedWild = farmedWild.toLowerCase();
         const lBodyOfWater = bodyOfWater.toLowerCase();
         const lCertOrg = certOrg.toLowerCase();
 
         // 1. Geographic Scoring
-        const geoScore = (term: string) => {
-            if (!term) return 0;
-            if (term === 'worldwide') return 15;
-            if (recZone === 'worldwide') return 40;
-            if (recZone.includes(term) || term.includes(recZone)) return 40;
-            if (recSub.includes(term) || term.includes(recSub)) return 30;
-            return 0;
-        };
-        const locationScore = Math.max(geoScore(lCountry), geoScore(lBodyOfWater));
-        score += locationScore;
+        // Country matches to EconomicZone
+        if (lCountry) {
+            if (recZone === 'worldwide') {
+                score += 40;
+            } else if (recZone.includes(lCountry) || lCountry.includes(recZone)) {
+                score += 40;
+            } else {
+                // Check if country was mistakenly provided as subnational in DB
+                if (recSub.includes(lCountry) || lCountry.includes(recSub)) {
+                    score += 20; // Lower boost if in subnational
+                }
+            }
+        }
+
+        // SubnationalArea matches to SubnationalArea
+        if (lSubnational) {
+            if (recSub.includes(lSubnational) || lSubnational.includes(recSub)) {
+                score += 30;
+            }
+        }
+
+        // Body of Water matches to BOWs (recBow) and FAOMajors (recFao)
+        if (lBodyOfWater) {
+            if (recBow.includes(lBodyOfWater) || lBodyOfWater.includes(recBow)) {
+                score += 40;
+            } else if (recFao.includes(lBodyOfWater) || lBodyOfWater.includes(recFao)) {
+                score += 40;
+            }
+        }
 
         // 1.5 Species-Method Probability Filtering
         const getPlausibility = (s: string, m: string) => {
@@ -338,15 +364,15 @@ export async function findCandidates(
 
         // 3. Production Method (F/A)
         if (lFarmedWild) {
-            const isFarmedInput = lFarmedWild.startsWith('f');
-            const isWildInput = lFarmedWild.startsWith('w');
+            const isFarmedInput = /farm|aqua|raised|culture/.test(lFarmedWild);
+            const isWildInput = /wild|fisher|capture|caught/.test(lFarmedWild);
             const isFarmedDB = record.ProductionMethod === 'A';
             const isWildDB = record.ProductionMethod === 'F';
 
             if ((isFarmedInput && isFarmedDB) || (isWildInput && isWildDB)) {
                 score += 40;
             } else if ((isFarmedInput && isWildDB) || (isWildInput && isFarmedDB)) {
-                score = 0; // Hard mismatch
+                score -= 60; // Heavy penalty instead of hard exclusion
             }
         }
 

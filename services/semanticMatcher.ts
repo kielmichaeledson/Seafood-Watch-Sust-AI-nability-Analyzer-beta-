@@ -5,7 +5,7 @@ import speciesData from '../data/species.json';
 
 declare var process: {
   env: {
-    API_KEY: string;
+    GEMINI_API_KEY: string;
   };
 };
 
@@ -491,7 +491,7 @@ export async function evaluateSemanticMatch(
 
     // 4. AI-driven evaluation for more complex cases
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const schema = {
             type: Type.OBJECT,
             properties: {

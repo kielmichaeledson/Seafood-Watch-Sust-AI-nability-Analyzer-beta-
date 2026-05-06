@@ -27,7 +27,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
 
 declare var process: {
   env: {
-    API_KEY: string;
+    GEMINI_API_KEY: string;
   };
 };
 
@@ -211,11 +211,12 @@ function calculateStrictReliability(input: any, record: any): number {
     // 4. Body of Water Match
     const inputBow = (input.bow || '').toLowerCase();
     const dbBow = (record.BodyOfWater || '').toLowerCase();
-    if (inputBow && isMatch(inputBow, dbBow)) {
+    const dbFao = (record.FAOMajors || '').toLowerCase();
+    if (inputBow && (isMatch(inputBow, dbBow) || isMatch(inputBow, dbFao))) {
         score += weights.bodyOfWater;
-    } else if (inputBow && !dbBow) {
+    } else if (inputBow && !dbBow && !dbFao) {
         score += weights.bodyOfWater * 0.5;
-    } else if (inputBow && dbBow && !isMatch(inputBow, dbBow)) {
+    } else if (inputBow && (dbBow || dbFao) && !isMatch(inputBow, dbBow) && !isMatch(inputBow, dbFao)) {
         score -= 10;
     } else if (!inputBow) {
         score += weights.bodyOfWater;
@@ -250,7 +251,7 @@ function calculateStrictReliability(input: any, record: any): number {
 }
 
 async function rateBatch(items: { input: any; index: number }[]): Promise<AnalysisResult[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     let retries = 5;
     let delay = 5000;
 
@@ -619,7 +620,7 @@ async function preNormalizeKDEs(
     }
 
     const canonical = getCanonicalTerms();
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const schema = {
         type: Type.OBJECT,
         properties: {
@@ -701,7 +702,7 @@ export function performStaticMapping(mappableFields: string[], fileHeaders: stri
     'Common name': ['commonname', 'species', 'commonname', 'product', 'item'],
     'Scientific name': ['scientificname', 'latin', 'scientific'],
     'Source country': ['economiczone', 'eez', 'country', 'origin'],
-    'Subnational area': ['subnationalarea', 'subnational', 'state', 'province', 'area'],
+    'Subnational area': ['subnationalarea', 'subnational', 'state', 'province', 'area', 'region', 'territory'],
     'Body of water': ['bows', 'faomajors', 'bodyofwater', 'water', 'bow'],
     'Production Method': ['methods', 'method', 'gear'],
     'Certification': ['harvestcertification', 'certification', 'label', 'ecolabel']
